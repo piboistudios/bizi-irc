@@ -22,11 +22,12 @@ mongoose.connect(dsn, { ssl: true, sslValidate: false })
             if (err) return reject(err);
             resolve(pems);
         }));
+        const key = pems.private, cert = pems.cert;
         const server = IRC.createServer({
             hostname: 'gabedev.chat',
             dbRefreshInterval: 5000,
-            key: pems.private,
-            cert: pems.cert
+            key,
+            cert
         });
 
         server.listen(6697);
@@ -36,6 +37,7 @@ mongoose.connect(dsn, { ssl: true, sslValidate: false })
         // const key = fs.readFileSync(__dirname + '/keys/spdy-key.pem');
         // const cert = fs.readFileSync(__dirname + '/keys/spdy-cert.pem');
         const https = require('http');
+
         const wsServer = https.createServer({
             key,
             cert
