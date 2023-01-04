@@ -5,7 +5,7 @@ const {
   ERR_CHANOPRIVSNEEDED
 } = require('../replies')
 
-function topic({ user, server, parameters: [channelName, topic] }) {
+function topic({ user, server, tags, parameters: [channelName, topic] }) {
   let channel = server.findChannel(channelName)
   if (channel) {
     // no new topic given, → check
@@ -28,7 +28,7 @@ function topic({ user, server, parameters: [channelName, topic] }) {
 
     // empty string for topic, → clear
     channel.topic = topic === '' ? null : topic
-    channel.send(user, 'TOPIC', [channel.name, topic === '' ? ':' : `:${topic}`])
+    channel.send(user, 'TOPIC', [channel.name, topic === '' ? ':' : `:${topic}`], tags)
   }
 }
 

@@ -1,6 +1,7 @@
 const {
 } = require('../replies')
 const { debuglog } = require('util');
+const Message = require('../message');
 const debug = debuglog('ircs:commands:setname')
 /** 
  *  @param {{
@@ -10,7 +11,8 @@ const debug = debuglog('ircs:commands:setname')
  * }} param0 
  * @returns 
  */
-module.exports = function setname({ user, server, parameters: [realname] }) {
+module.exports = function setname({ user, server, tags, parameters: [realname] }) {
+  if (!user.principal) return;
   realname = realname.trim()
 
   debug('setname', user.mask(), realname)
@@ -23,6 +25,7 @@ module.exports = function setname({ user, server, parameters: [realname] }) {
   }
 
   user.realname = realname;
-  user.send(user, 'SETNAME', [realname])
-  user.channels.forEach(chan => chan.broadcast(user, 'SETNAME', [realname]));
+  const msg = new Message(user, 'SETNAME', [realname], tags)
+  user.send(msg)
+  user.channels.forEach(chan => chan.broadcast(msg));
 }

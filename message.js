@@ -3,6 +3,7 @@ const Duplex = require('stream');
 const { randomUUID } = require('crypto');
 
 const logger = require('./logger').mkLogger('message');
+const batchTargets = {};
 /**
  * Represents an IRC message.
  */
@@ -29,6 +30,12 @@ class Message {
      * @member {string}
      */
     this.command = command
+    this.ephemeral = false;
+    /**@type {string} */
+    this.batchId = undefined;
+
+    /**@type {Array<Message>} */
+    this.batch = undefined;
     /**
      * Parameters given to this command.
      * @member {Array.<string>}
@@ -41,20 +48,30 @@ class Message {
      * @member {Object.<string>}
      */
     this.tags = tags || {};
-    this.tags.msgid = randomUUID()
+    this.tags.msgid = this.tags.msgid || randomUUID()
     this.requirements = requirements;
 
     if (!this.tags.time) {
       this.tags.time = new Date().toISOString();
     }
-    logger.debug("checking if maybeUser...", maybeUser);
+    // logger.debug("checking if maybeUser...", maybeUser);
     if (maybeUser instanceof Duplex) {
-      logger.debug('voila...');
+      // logger.debug('voila...');
 
       /**@type {import('./user')} */
       this.user = maybeUser;
     }
-    logger.debug("Created message:", { tags, prefix, command, parameters });
+    this._target = null;
+    if (this.command === 'BATCH') {
+      if (this.parameters[0].charAt(0) === '+') {
+        batchTargets[this.parameters[0].slice(1)] = this.parameters[this.parameters.length - 1];
+      } else if (this.parameters[0].charAt(0) === '-') {
+        this._target = batchTargets[this.parameters[0].slice(1)];
+
+        delete batchTargets[this.parameters[0].slice(1)];
+      }
+    }
+    // logger.debug("Created message:", { tags, prefix, command, parameters });
   }
 
   /**
@@ -75,6 +92,11 @@ class Message {
       ret = `${tagStr} ${ret}`;
     }
     return ret;
+  }
+
+  get target() {
+    if (this.command === 'BATCH') return this._target || this.parameters[this.parameters.length-1];
+    else return this.parameters[0];
   }
 }
 

@@ -1,3 +1,4 @@
+const async = require('async');
 const { debuglog } = require('util');
 const to = require('flush-write-stream');
 const Parser = require('./parser');
@@ -24,10 +25,10 @@ class User extends Duplex {
     });
     /**@type {import('./server')} */
     this.server = server;
-    const flagModeChars = ['p', 's', 'i', 't', 'n', 'm', 'b']
-    const paramModeChars = ['l', 'k']
-    const listModeChars = ['o', 'v']
-    this.modes = Modes.mk({ flagModeChars, paramModeChars, listModeChars })
+    /**@type {import('jose').JWTPayload} */
+    this.auth = undefined;
+
+
 
     this.idleTime = 0;
     this.socket = sock;
@@ -46,6 +47,7 @@ class User extends Duplex {
         final: ''
       },
     }
+    this.initialized = false;
     this.cap = {
       list: [],
       version: 0
@@ -82,7 +84,13 @@ class User extends Duplex {
       this.emit('end', e);
     });
   }
-
+  async setup() {
+    const flagModeChars = ['p', 's', 'i', 't', 'n', 'm', 'b']
+    const paramModeChars = ['l', 'k']
+    const listModeChars = ['o', 'v']
+    this.modes = await Modes.mk({ flagModeChars, paramModeChars, listModeChars })
+    this.initialized = true;
+  }
   async onReceive(message) {
     debug('receive', message + '')
     message.user = this
@@ -133,37 +141,34 @@ class User extends Duplex {
    *  type: string,
    *  params: string[]
    * }} message Message to send.
-   * @returns {Boolean}
+   * @returns {Promise<Boolean>}
    */
-  async send(message, batchId) {
+  async send(message) {
     if (message.batch instanceof Array) {
       if (this.cap.list.includes('batch')) {
 
         logger.debug("BATCH SEND", message);
-        const batchId = rand.generateKey();
-        this.send(this.server, "BATCH", [`+${batchId}`, message.type, message.params || []]);
-        message.batch.forEach(m => {
-          if (m instanceof Array) {
-            this.send(...m, batchId);
-          } else if (m instanceof Message) {
-            this.send(m, batchId)
-          }
-        });
-        return this.send(this.server, "BATCH", [`-${batchId}`]);
+          return await async.series(message.batch.map(m => async.asyncify(() => {
+          const msg = m instanceof Array ? new Message(...m) : m;
+          msg.ephemeral = true;
+          return this.send(msg);
+        })));
       } else {
-        return (await Promise.all(message.batch.map(m => {
+        return (await async.series(message.batch.map(m => {
           if (m instanceof Array) {
-            this.send(...m);
+            return new Message(...m);
           } else if (m instanceof Message) {
-            this.send(m)
+            return m
           }
-        }))).every(Boolean);
+        })
+        .filter(m => m.command.toLowerCase() !== 'batch')
+        .map(m => async.asyncify(() => {
+          m.ephemeral = true;
+          return this.send(m);
+        })))).every(Boolean);
       }
     }
-    message.tags = message.tags || {};
-    if (batchId) {
-      message.tags["batch"] = batchId;
-    }
+
     if (!(message instanceof Message)) {
       message = new Message(...arguments)
     } else if (message.requirements.length && !message.requirements.every(this.cap.list.includes)) return;
@@ -173,9 +178,12 @@ class User extends Duplex {
     }
     if (this.cap.list.includes('account-tag')) {
       if (message.user) {
-        logger.debug("Setting account tag");
-        message.tags["account"] = message?.user?.principal?.uid;
+        logger.debug("Setting account tag", message.user.principal);
+        if(message?.user?.principal?.uid) message.tags["account"] = message.user.principal.uid;
       }
+    }
+    if(message.command === 'BATCH') {
+      delete message.tags.batch;
     }
     logger.debug('da message', message);
     logger.debug('send', message + '')
@@ -183,7 +191,17 @@ class User extends Duplex {
     const lastParam = message.parameters[message.parameters.length - 1];
     if (lastParam && lastParam.indexOf(' ') !== -1 && lastParam[0] !== ':') message.parameters[message.parameters.length - 1] = ':' + lastParam;
     logger.sub('last-parararam').debug({ lastParam });
-    return this.socket && this.write(message);
+    return this.socket ? new Promise((resolve, reject) => {
+      function done() {
+        logger.info("ENDING WRITE", ...arguments);
+        resolve(...arguments);
+      }
+      if (!this.write(message)) {
+        this.once('drain', done)
+      } else {
+        process.nextTick(done);
+      }
+    }) : Promise.resolve(true);
   }
 
   /**

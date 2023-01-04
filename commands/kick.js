@@ -17,7 +17,7 @@ const {
  * }} param0 
  * @returns 
  */
-const kick = async ({ server, user, parameters }) => {
+const kick = async ({ server, user, parameters, tags }) => {
   let [channelName, target, comment] = parameters;
 
   if (!channelName || !target) {
@@ -41,7 +41,7 @@ const kick = async ({ server, user, parameters }) => {
     return
   }
 
-  channel.send(user, 'KICK', parameters);
+  channel.send(user, 'KICK', parameters, tags);
   channel.part(target)
 };
 

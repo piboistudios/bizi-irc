@@ -12,7 +12,7 @@ const logger = require('../logger').mkLogger('ircs:commands:invite')
  * }} param0 
  * @returns 
  */
-module.exports = async function invite({ user, server, parameters: [nickname, channelName] }) {
+module.exports = async function invite({ tags, user, server, parameters: [nickname, channelName] }) {
   logger.info(user.mask(), "INVITE", nickname, channelName);
   const channel = await server.findChannel(channelName);
   if (!channel) return;
@@ -24,7 +24,7 @@ module.exports = async function invite({ user, server, parameters: [nickname, ch
     // channel.invited.push(nickname);
     channel.modes.add("I", [nickname]);
     logger.debug("Sending to", target);
-    const msg = new Message(user, 'INVITE', [target.nickname, channelName]);
+    const msg = new Message(user, 'INVITE', [target.nickname, channelName], tags);
     target.send(msg)
     logger.info("Sent invite");
     if (channel) {

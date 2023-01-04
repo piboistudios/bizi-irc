@@ -32,7 +32,7 @@ function USER({ user, server, parameters }) {
   user.servername = servername;
   if (!user.cap.version) {
     server.welcome(user);
-  } 
+  }
 }
 
 module.exports = USER;

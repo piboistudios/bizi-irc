@@ -1,0 +1,25 @@
+
+steps:
+  # - name: node
+    # args: ["replace-npmrc", "$PROJECT_ID"]
+  - name: gcr.io/cloud-builders/npm
+    args:
+      ["run", "artifactregistry-login", "--", '--credential-config="./.npmrc"']
+  - name: node
+    args: ["print-npmrc"]
+
+  
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - "build"
+      - "-t"
+      - "us-central1-docker.pkg.dev/$PROJECT_ID/bizi-docker-images/$REPO_NAME:$SHORT_SHA"
+      - "."
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      [
+        "push",
+        "us-central1-docker.pkg.dev/$PROJECT_ID/bizi-docker-images/$REPO_NAME:$SHORT_SHA",
+      ]
+images:
+  - "us-central1-docker.pkg.dev/$PROJECT_ID/bizi-docker-images/$REPO_NAME:$SHORT_SHA"

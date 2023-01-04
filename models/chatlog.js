@@ -14,13 +14,18 @@ const chatLog = new Schema({
             prefix: String,
             command: String,
             parameters: [String],
-            tags: {}
+            tags: {},
+            batch: {
+                type: [{
+                    prefix: String,
+                    command: String,
+                    parameters: [String],
+                    tags: {},
+                }], default: () => null
+            }
         }],
         default: []
     }
 });
-chatLog.methods.getMessages = function () {
-    return this.messages.map(m => new Message(m.prefix, m.command, m.parameters, { ...m.tags, account: m.user }))
-}
 
 module.exports = mongoose.model("ChatLog", chatLog);

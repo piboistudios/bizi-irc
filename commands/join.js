@@ -18,7 +18,7 @@ const names = require('./names')
  * @returns 
  */
 async function join(opts) {
-  const { user, server, parameters: [channelNames, ...restOfParams] } = opts
+  const { user, tags, server, parameters: [channelNames, ...restOfParams] } = opts
 
   if (!channelNames) {
     return user.send(server, ERR_NEEDMOREPARAMS, ['JOIN', ':Not enough parameters'])
@@ -52,8 +52,8 @@ async function join(opts) {
       logger.error("Unable to join channel:", e);
     }
 
-    channel.send(user, 'JOIN', [channel.name, user.username, `:${user.realname}`])
-
+    channel.send(user, 'JOIN', [channel.name, user.username, `:${user.realname}`], tags)
+    // if (!channel.modes.has('m')) channel.addVoice(user);
     names(Object.assign(
       {},
       opts,

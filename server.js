@@ -11,14 +11,14 @@ const pkg = require('./package.json');
 const { EOL } = require('os');
 const { mkLogger } = require('./logger');
 const logger = mkLogger('ircs:Server');
-const debug = debuglog('ircs:Server')
+const debug = logger.debug;
 const crypto = require('crypto');
 const async = require('async');
 const ChatLog = require('./models/chatlog');
 /**
  * Represents a single IRC server.
  */
-class Server extends net.Server {
+class Server extends require('tls').Server {
   /**
    * Creates a server instance.
    *
@@ -44,17 +44,24 @@ class Server extends net.Server {
     super(options);
     /**@type {import('mongoose').Document<any, any, any>[]} */
     this.docs = [];
+    /**
+     * @type {Object.<string, {type:String, batchParams: string[], ready: Boolean, user: import('./user'), commands: import('./message')[]}>}
+     */
+    this.batches = {};
     logger.debug("options", options);
     this.dbSyncInterval = setInterval(() => {
       logger.info("DB Sync");
       // logger.debug("Checking docs for changes:", this.docs);
       this.docs.forEach(d => {
         const changes = d.getChanges();
-        logger.debug("changes for", d);
-        logger.debug("changes:", changes);
+        // logger.debug("changes for", d);
+        // logger.debug("changes:", changes);
         if (Object.keys(changes).length) {
-          logger.info("Saving doc...", d);
-          d.save();
+          // logger.info("Saving doc...", d);
+          d.save()
+            .catch(e => {
+              logger.error("Unable to save doc:", e);
+            })
         }
       });
     }, options.dbRefreshInterval || 1500 * 60);
@@ -78,7 +85,8 @@ class Server extends net.Server {
     this.botFlag = 'b';
     this.auth = {
       mechanisms: [
-        'PLAIN'
+        'PLAIN',
+        'XOAUTH2'
       ]
     }
     this.isupport = [
@@ -106,6 +114,7 @@ class Server extends net.Server {
       'chghost',
       'setname',
       'account-tag',
+      'account-notify',
       // 'example.org/dummy-cap=dummyvalue',
       // 'example.org/second-dummy-cap',
       'typing',
@@ -114,7 +123,7 @@ class Server extends net.Server {
       'message-tags',
       'whox',
       'userhost-in-names',
-      { name: 'sasl', value: 'EXTERNAL,DH-AES,DH-BLOWFISH,ECDSA-NIST256P-CHALLENGE,PLAIN' },
+      { name: 'sasl', value: this.auth.mechanisms.join(',') },
 
     ];
     this.motd = fs.readFileSync('MOTD').toString().split(EOL);
@@ -157,12 +166,13 @@ class Server extends net.Server {
         }
         this.on('connection', this.addCnx);
 
-        this.on('user', user => {
-          const logger = mkLogger('user');
-          logger.debug("User added", user);
-          user.on('data', d => {
-            logger.debug(d);
-          });
+        this.on('user', async user => {
+          if (!user.initialized) await user.setup();
+          // const logger = mkLogger('user');
+          // logger.debug("User added", user);
+          // user.on('data', d => {
+          //   logger.debug(d);
+          // });
           user.pipe(writer.obj((message, enc, cb) => {
             this.emit('message', message, user);
             cb();
@@ -173,9 +183,32 @@ class Server extends net.Server {
           await this.execute(message);
           if (message.user)
             message.user.sync();
-          debug('message', message + '');
+          // debug('message', message + '');
         });
 
+        const authedCommands = [
+          'JOIN',
+          'KICK',
+          'PRIVMSG',
+          'TAGMSG',
+          'BATCH',
+          'NOTICE',
+          'INVITE',
+          'AWAY',
+          'PING',
+          'QUIT',
+          'SETNAME',
+          'CHATHISTORY',
+          'NICK',
+          'TOPIC',
+        ];
+
+        authedCommands.forEach(cmd => {
+          this.use(cmd, async function ({ user }, _, halt) {
+            logger.info("auth check... authorized?", !!user.principal);
+            if (!user.principal) return halt(new Error("Unauthorized"));
+          });
+        });
         for (const command in commands) {
           const fn = commands[command];
           this.use(command, fn);
@@ -194,6 +227,48 @@ class Server extends net.Server {
   async validateMode(user, dest, modeChars, isChannel) {
     return true;
   }
+  async finishBatch(id) {
+    logger.info("Finishing batch", id);
+    const { user, commands, batchParams } = this.batches[id];
+    /**@todo validate commands, send errors to user */
+    logger.debug("Batch commands:", commands.length);
+    const message = {
+      batch: commands.map(m => ({
+        prefix: Boolean(m.prefix) ? m.prefix : undefined,
+        command: m.command,
+        parameters: m.parameters,
+        tags: m.tags,
+      })),
+    }
+    this.chatlog.messages.push(message);
+    try {
+
+      if (this.chatlog.messages.length >= this.chatBatchSize) {
+        this.chatlog = await this.mkChatLog();
+      }
+    } catch (e) {
+      logger.error("Unable to save chat logs:", e);
+    }
+    this.batches[id].ready = true;
+    const [target] = batchParams;
+
+    const chan = await this.findChannel(target);
+    const targetUser = !chan ? await this.findUser(target) : null;
+    await async.series(commands.map(command => async.asyncify(() => {
+      logger.sub('BATCH').debug(id, "executing", command);
+
+      logger.debug("Channel found?", !!chan);
+      if (chan) {
+        return chan.broadcast(command);
+      } else {
+        if (targetUser) {
+          return targetUser.send(command);
+        }
+      }
+    })))
+
+    delete this.batches[id];
+  }
   async mkChatLog() {
     if (this.chatlog) await this.chatlog.save();
     if (this.chatLogInterval) clearInterval(this.chatLogInterval);
@@ -207,9 +282,9 @@ class Server extends net.Server {
   }
   async saveToChatLog(m) {
     try {
-      if (m instanceof Message && !m?.tags?.batch) {
+      if (m instanceof Message && !m.ephemeral && !m?.tags?.batch) {
         if (this.chatLogCommandWhitelist.indexOf(m?.command.toString().toUpperCase()) === -1) return;
-        if (this.chatlog.messages.find(m2 => m.tags.msgid === m2.tags.msgid)) return;
+        if (this.chatlog.messages.find(m2 => m.tags?.msgid && m.tags.msgid === m2.tags?.msgid)) return;
         logger.debug("saving to chat log...", m);
         const message = {
           prefix: Boolean(m.prefix) ? m.prefix : undefined,
@@ -225,7 +300,7 @@ class Server extends net.Server {
           this.chatlog = await this.mkChatLog();
         }
       }
-      logger.sub('saveToChatLog').warn("Ignoring message:", m);
+      else logger.sub('saveToChatLog').warn("Ignoring message:", m, "EPHEMERAL?", m.ephemeral, "BATCH?", !m?.tags?.batch);
     } catch (e) {
       logger.warn("Unable to save message to chat logs...", e);
       logger.warn("The message:", m);
@@ -288,10 +363,11 @@ class Server extends net.Server {
    */
   async findUser(nickname) {
     nickname = normalize(nickname)
-    const memUser = this.users.find(user => normalize(user.nickname) === nickname);
+    const memUser = this.users.find(user => user.nickname && normalize(user.nickname) === nickname);
     if (memUser) return memUser;
     const principal = await require('./models/user').findOne({ nickname: nickname });
     const user = new User(null, this);
+    user.nickname = nickname;
     user.principal = principal;
     return user;
   }
@@ -343,14 +419,14 @@ class Server extends net.Server {
    *
    * @return {Channel} The new Channel.
    */
-  createChannel(channelName) {
+  async createChannel(channelName) {
     channelName = normalize(channelName)
     if (!Channel.isValidChannelName(channelName)) {
       throw new Error('Invalid channel name')
     }
 
     if (!this.channels.has(channelName)) {
-      this.channels.set(channelName, Channel.mk({ name: channelName, server: this }))
+      this.channels.set(channelName, await Channel.mk({ name: channelName, server: this }))
     }
 
     return this.channels.get(channelName)
@@ -365,7 +441,7 @@ class Server extends net.Server {
    */
   async getChannel(channelName) {
     if (!Channel.isValidChannelName(channelName)) return;
-    return (await this.findChannel(channelName)) || this.createChannel(channelName);
+    return (await this.findChannel(channelName)) || await this.createChannel(channelName);
   }
 
   /**
@@ -386,23 +462,46 @@ class Server extends net.Server {
     debug('register middleware', command)
     this.middleware.push({ command, fn })
   }
+  /**
+   * 
+   * @param {import('./message')} message 
+   * @param {*} cb 
+   * @returns 
+   */
+  execute(message) {
 
-  execute(message, cb) {
+    if (message.tags.batch) {
+      if (!this.batches[message.tags.batch]) this.batches[message.tags.batch] = { ready: false, commands: [] };
+      if (!this.batches[message.tags.batch].ready) {
+
+        this.batches[message.tags.batch].commands.push(message);
+        return;
+      }
+    }
     debug('exec', message + '')
     message.server = this
     const locals = {};
+    let nextCalled = false;
     return async.detectSeries(this.middleware, (mw, next) => {
       if (mw.command === '' || mw.command === message.command) {
         debug('executing', mw.command, message.parameters)
-        return new Promise((resolve, reject) => resolve())
-          .then(() => mw.fn(message, locals, (e) => next(e, true))) // promisify in case its not async
+        return Promise.resolve()
+          .then(() => mw.fn(message, locals, (e) => {
+            nextCalled = true;
+            next(e, true);
+          })) // promisify in case its not async
           .then(() => {
-            if (mw.fn.length < 3) {
+            if (!nextCalled) {
               next(null, false)
+            } else {
+              nextCalled = false;
             }
           })
       } else next(null, false);
     })
+      .catch(e => {
+        message.user && message.user.send(this, "FAILURE", [message.command, '' + e]);
+      })
   }
 
   /**

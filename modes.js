@@ -120,7 +120,7 @@ schema.pre("save", function (next) {
 
 })
 const model = mongoose.model("Modes", schema);
-model.mk = function mk({ flagModeChars, paramModeChars, listModeChars }) {
+model.mk = async function mk({ flagModeChars, paramModeChars, listModeChars }) {
   const opts = {
     flagModeChars: flagModeChars,
     paramModeChars: paramModeChars,
@@ -133,6 +133,7 @@ model.mk = function mk({ flagModeChars, paramModeChars, listModeChars }) {
   modes.flagModes = {};
   modes.paramModes = {};
   modes.listModes = {};
+  await modes.save();
   return modes;
 }
 module.exports = model;

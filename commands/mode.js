@@ -20,13 +20,15 @@ const logger = mkLogger('ircs:commands:mode');
  * }} param0 
  * @returns 
  */
-module.exports = async function mode({ user, server, parameters: [target, modes = '', ...params] }) {
+module.exports = async function mode({ user, server, tags, parameters: [target, modes = '', ...params] }) {
+  if (modes && !user) return;
   const leadChar = target[0];
   /**
    * @type {import('../user') | import('../channel')}
    */
   let dest;
   let modeIsCode, isChannel = true;
+
   if (['&', '#'].indexOf(leadChar) !== -1) {
     const channel = await server.findChannel(target)
     if (!channel) {
@@ -121,7 +123,7 @@ module.exports = async function mode({ user, server, parameters: [target, modes 
       }
     })
 
-    defaultReply && dest.send(user, 'MODE', [target, modes, ...params])
+    defaultReply && dest.send(user, 'MODE', [target, modes, ...params], tags)
   }
 
 }

@@ -120,10 +120,10 @@ class Channel {
       message = new Message(...arguments);
     }
     let sent = false;
-    this.users.forEach((u) => {
+    await Promise.all(this.users.map((u) => {
       sent = true;
-      u.send(message);
-    });
+      return u.send(message);
+    }));
     if (!sent) await this.server.saveToChatLog(message);
   }
 
@@ -137,12 +137,13 @@ class Channel {
       message = new Message(...arguments)
     }
     let sent = false;
-    this.users.forEach((u) => {
+    await Promise.all(this.users.map((u) => {
       if (!u.matchesMask(message.prefix)) {
         sent = true;
-        u.send(message);
+        return u.send(message);
       }
-    });
+      return Promise.resolve(true);
+    }));
     if (!sent) await this.server.saveToChatLog(message);
   }
   /**
@@ -261,7 +262,7 @@ schema.loadClass(Channel);
  * @class Channel
  */
 const model = mongoose.model("Channel", schema);
-model.mk = function mk({ name, server }) {
+model.mk = async function mk({ name, server }) {
   const opts = {};
   opts.name = name
   // opts.invited = [];
@@ -270,12 +271,14 @@ model.mk = function mk({ name, server }) {
   const flagModeChars = ['p', 's', 'i', 't', 'n', 'm']
   const paramModeChars = ['l', 'k']
   const listModeChars = ['o', 'v', 'b', 'I']
-  opts.modes = Modes.mk({ flagModeChars, paramModeChars, listModeChars });
+  opts.modes = await Modes.mk({ flagModeChars, paramModeChars, listModeChars });
+  
   opts.meta = {
     banned: {},
     invited: {}
   }
   const channel = new model(opts);
+  await channel.save();
   /**@type {import('./user')[]} */
   channel.users = [];
   /**@type {import('./server')} */

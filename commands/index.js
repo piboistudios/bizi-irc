@@ -3,6 +3,7 @@ const kick = require('./kick');
 module.exports = {
   AUTHENTICATE: require('./authenticate'),
   AWAY: require('./away'),
+  BATCH: require('./batch'),
   CHATHISTORY: require('./chathistory'),
   CAP: require('./cap'),
   NICK: require('./nick'),
