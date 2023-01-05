@@ -31,8 +31,8 @@ mongoose.connect(dsn, options)
             key,
             cert
         });
-
-        server.listen(6697);
+        const ircPort = process.env.PORT || 6697;
+        server.listen(ircPort);
         const ws = require('ws');
         const fs = require('fs');
         const { PassThrough, Transform } = require('stream');
@@ -75,7 +75,8 @@ mongoose.connect(dsn, options)
                 server.removeCnx(user);
             })
         });
-        wsServer.listen(6698);
+        const webIrcPort = process.env.WEB_PORT || 6698
+        wsServer.listen(webIrcPort);
         wsServer.on('secureConnection', s => {
             logger.debug('got secure connection');
         });
