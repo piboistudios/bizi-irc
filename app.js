@@ -8,8 +8,10 @@ const dbhost = process.env.DB_ADDR || "127.0.0.1",
     dbuser = encodeURIComponent(process.env.DB_USER),
     dbpass = encodeURIComponent(process.env.DB_PASS);
 const dsn = util.format("mongodb://%s:%s@%s:%s/%s", dbuser, dbpass, dbhost, dbport, dbname);
-
-mongoose.connect(dsn, { ssl: true, sslValidate: false })
+logger.info("Mongo DSN:", dsn);
+const options = { ssl: Boolean(process.env.DB_SSL), sslValidate: Boolean(process.env.DB_SSL_VALIDATE), authSource: process.env.DB_AUTH_SOURCE }/* , { ssl: true, sslValidate: false } */
+logger.info("Mongo options:", options);
+mongoose.connect(dsn, options)
     .then(async cnx => {
         // return;
         logger.info("connected to database", { dbhost, dbport, dbname, dbuser });
