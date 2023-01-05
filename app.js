@@ -15,7 +15,7 @@ mongoose.connect(dsn, { ssl: true, sslValidate: false })
         logger.info("connected to database", { dbhost, dbport, dbname, dbuser });
         const IRC = require('./');
         var selfsigned = require('selfsigned');
-        const attrs = [{ name: 'commonName', value: process.env.HOSTNAME }];
+        const attrs = [{ name: 'commonName', value: process.env.HOSTNAME || 'just.trust.me' }];
 
         /**@type {import('selfsigned').GenerateResult} */
         const pems = await new Promise((resolve, reject) => selfsigned.generate(attrs, { days: 90 }, (err, pems) => {

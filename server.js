@@ -157,6 +157,7 @@ class Server extends require('tls').Server {
 
         this.addCnx = sock => {
           const user = new User(sock, this);
+          logger.debug('USER', user);
           this.users.push(user);
           this.emit('user', user);
           return user;
@@ -164,7 +165,7 @@ class Server extends require('tls').Server {
         this.removeCnx = user => {
           user.onReceive(new Message(null, 'QUIT', []));
         }
-        this.on('connection', this.addCnx);
+        this.on('secureConnection', this.addCnx);
 
         this.on('user', async user => {
           if (!user.initialized) await user.setup();
@@ -174,6 +175,7 @@ class Server extends require('tls').Server {
           //   logger.debug(d);
           // });
           user.pipe(writer.obj((message, enc, cb) => {
+            logger.debug("MESSAGE");
             this.emit('message', message, user);
             cb();
           }));

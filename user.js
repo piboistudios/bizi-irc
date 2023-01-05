@@ -9,7 +9,57 @@ const { mkLogger } = require('./logger');
 const rand = require("generate-key");
 const Modes = require('./modes');
 const logger = mkLogger('user');
-const debug = debuglog('ircs:User');
+const debug = logger.debug;
+
+/**
+  * Parses an individual IRC command.
+  *
+  * @param {string} line IRC command string.
+  * @return {Message}
+  */
+function parse(line, cb) {
+  logger.debug('parsing', line)
+  let tags
+  let prefix
+  let command
+  let params
+
+  if (line[0] === '@') {
+    const spaceIndex = line.indexOf(' ');
+    tags = Object.fromEntries(line
+      .slice(1, spaceIndex)
+      .split(';')
+      .map(str => str.split('='))
+      .map(([key, ...value]) => ([key, value ? value.join('=') : '']))
+    )
+
+    line = line.slice(spaceIndex + 1);
+  }
+
+  if (line[0] === ':') {
+    let prefixEnd = line.indexOf(' ')
+    prefix = line.slice(1, prefixEnd)
+    line = line.slice(prefixEnd + 1)
+  }
+
+  let colon = line.indexOf(' :')
+  if (colon !== -1) {
+    let append = line.slice(colon + 2)
+    line = line.slice(0, colon)
+    params = line.split(/ +/g).concat([append])
+  } else {
+    params = line.split(/ +/g)
+  }
+
+  command = params.shift()
+  try {
+
+    const msg = new Message(prefix, command, params, tags);
+    cb(null, msg)
+  } catch (error) {
+    debug("WHOOPS", error);
+  }
+}
 
 /**
  * Represents a User on the server.
@@ -68,15 +118,21 @@ class User extends Duplex {
       this.onReceive(message);
     });
     if (!sock) return;
-
+    sock.on('data', line => {
+      // logger.debug('got:', '' + d);
+      parse('' + line, (err, result) => {
+        if (err) return this.emit('error', err);
+        this.onReceive(result);
+      });
+    });
     /**@type {string} */
     this.hostname = sock.remoteAddress;
     /**@type {string} */
     this.address = sock.remoteAddress;
-    sock.pipe(Parser()).pipe(to.obj((message, enc, cb) => {
-      this.onReceive(message)
-      cb()
-    }));
+    // sock.pipe(Parser()).pipe(to.obj((message, enc, cb) => {
+    //   this.onReceive(message)
+    //   cb()
+    // }));
     sock.on('error', e => {
       debug('error', e);
     });
@@ -120,7 +176,12 @@ class User extends Duplex {
       this.socket.emit('error');
       return cb();
     }
-    this.socket.write(`${message}\r\n`);
+    try {
+
+      this.socket.write(`${message}\r\n`);
+    } catch (e) {
+      logger.error("Unable to write to socket:", e);
+    }
     cb()
   }
 
@@ -148,7 +209,7 @@ class User extends Duplex {
       if (this.cap.list.includes('batch')) {
 
         logger.debug("BATCH SEND", message);
-          return await async.series(message.batch.map(m => async.asyncify(() => {
+        return await async.series(message.batch.map(m => async.asyncify(() => {
           const msg = m instanceof Array ? new Message(...m) : m;
           msg.ephemeral = true;
           return this.send(msg);
@@ -161,11 +222,11 @@ class User extends Duplex {
             return m
           }
         })
-        .filter(m => m.command.toLowerCase() !== 'batch')
-        .map(m => async.asyncify(() => {
-          m.ephemeral = true;
-          return this.send(m);
-        })))).every(Boolean);
+          .filter(m => m.command.toLowerCase() !== 'batch')
+          .map(m => async.asyncify(() => {
+            m.ephemeral = true;
+            return this.send(m);
+          })))).every(Boolean);
       }
     }
 
@@ -179,10 +240,10 @@ class User extends Duplex {
     if (this.cap.list.includes('account-tag')) {
       if (message.user) {
         logger.debug("Setting account tag", message.user.principal);
-        if(message?.user?.principal?.uid) message.tags["account"] = message.user.principal.uid;
+        if (message?.user?.principal?.uid) message.tags["account"] = message.user.principal.uid;
       }
     }
-    if(message.command === 'BATCH') {
+    if (message.command === 'BATCH') {
       delete message.tags.batch;
     }
     logger.debug('da message', message);
