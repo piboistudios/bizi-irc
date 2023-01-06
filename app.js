@@ -38,7 +38,7 @@ mongoose.connect(dsn, options)
         const { PassThrough, Transform } = require('stream');
         // const key = fs.readFileSync(__dirname + '/keys/spdy-key.pem');
         // const cert = fs.readFileSync(__dirname + '/keys/spdy-cert.pem');
-        const https = require('http');
+        const https = require('https');
 
         const wsServer = https.createServer({
             key,
@@ -57,7 +57,7 @@ mongoose.connect(dsn, options)
             duplex.remoteAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
             const write = duplex.write.bind(duplex);
             duplex.write = m => {
-                ``
+                // ``
                 cnx.send('' + m);
             }
             const user = server.addCnx(duplex);
