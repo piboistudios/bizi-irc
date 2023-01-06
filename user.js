@@ -120,7 +120,7 @@ class User extends Duplex {
     if (!sock) return;
     sock.on('data', line => {
       // logger.debug('got:', '' + d);
-      parse('' + line, (err, result) => {
+      parse('' + line.replace(/(\r\n)/gi, ''), (err, result) => {
         if (err) return this.emit('error', err);
         this.onReceive(result);
       });
