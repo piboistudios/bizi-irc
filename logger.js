@@ -1,7 +1,13 @@
 const callsite = require('callsite');
 const path = require('path');
 const debug = require('debug');
+try {
 
+    process.env.DEBUG_DETAILS = process.env.DEBUG_DETAILS ? Boolean(JSON.parse(process.env.DEBUG_DETAILS)) : true;
+} catch (e) {
+    console.warn("Failed to parse process.env.DEBUG_DETAILS");
+    process.env.DEBUG_DETAILS = true;
+}
 /**
  * 
  * @typedef {Object} Logger
@@ -14,9 +20,6 @@ const debug = require('debug');
 *    @property {function(string):Logger} sub Create another logger by adding a scope onto the existing scope of this logger. e.g. if the scope is 'test', the scope of the logger created by logger.sub('foo') is 'test:foo'
  */
 
-
-
-
 /**
  * Creates a bunyan-compatible logger scoped to the current module.
  * This will scope to the module like so:
@@ -26,16 +29,14 @@ const debug = require('debug');
  * @param {string} topic An optional topic to be appended to the scope.
  * @returns {Logger} A bunyan compatible logger
  */
-function mkLogger(topic) {
+function mkLogger(topic, v) {
     const stack = callsite(),
-        requester = stack[1].getFileName(),
+        requester = stack.find(c => isntACallFromThisModule(c.getFileName()))?.getFileName?.() || '',
         dir = path.relative('.', requester.split('.').slice(0, -1).join('.')),
         fn = process.env.DEBUG_INCLUDE_FUNC_NAME ? ':' + stack[1].getFunctionName() : ''
-
     const logger = ['debug', 'warn', 'error', 'info', 'fatal', 'trace'].reduce((obj, entry) => {
-        let subject = dir.replace(/(\/|\\)/g, ':') + fn;
-        if (topic) subject += `:${topic}`;
-        obj[entry] = debug(`${subject}:${entry}`);
+        let subject = dir.replace(/(\/|\\   )/g, ':') + fn;
+        obj[entry] = mkDebugger([subject, topic, entry].filter(Boolean).join(':'), v);
         return obj;
     }, {});
     logger.sub = v => mkLogger(topic + ':' + v);
@@ -51,17 +52,76 @@ function mkLogger(topic) {
  */
 module.exports = () => {
     const stack = callsite(),
-        requester = stack[1].getFileName(),
+        requester = stack.find(c => isntACallFromThisModule(c.getFileName())).getFileName(),
         dir = path.relative('.', requester.split('.').slice(0, -1).join('.')),
         fn = process.env.DEBUG_INCLUDE_FUNC_NAME ? ':' + stack[1].getFunctionName() : ''
 
     const logger = ['debug', 'warn', 'error', 'info', 'fatal', 'trace'].reduce((obj, entry) => {
         let subject = dir.replace(/(\/|\\)/g, ':') + fn;
-        obj[entry] = debug(`${subject}:${entry}`);
+        obj[entry] = mkDebugger(`${subject}:${entry}`);
         return obj;
     }, {});
     logger.sub = mkLogger;
 
     return logger;
 }
+
+
+function mkDebugger(_subject, verbose) {
+
+
+    return function () {
+        let subject = _subject;
+        const logType = subject.split(':').pop(),
+            detailed = process.env.DEBUG_DETAILS,
+            stack = callsite(),
+            entry = stack.find(c => isntACallFromThisModule(c.getFileName())),
+            line = detailed && entry?.getLineNumber?.(),
+            column = detailed && entry?.getColumnNumber?.(),
+
+            method = detailed && entry?.getMethodName?.(),
+            type = detailed && entry?.getMethodName?.(),
+            _function = detailed && entry?.fetFunctionName?.();
+        if (detailed) {
+            const parts = subject.split(':');
+            const front = parts.slice(0, -1).join(':');
+            subject = front + ':' + [type, method || _function, 'line', line, 'column', column].filter(Boolean).map(String).map(c => c.replace(/(\/|\\)/g, ':')).join(':') + ':' + logType;
+        }
+        const localDebugger = debug(subject);
+
+        // print to STDOUT
+        localDebugger(...arguments);
+    }
+}
+function isntACallFromThisModule(p) {
+    return p && p
+        .toLowerCase()
+        .indexOf(
+            module.filename
+                .toLowerCase()
+        ) === -1
+}
 module.exports.mkLogger = mkLogger;
+module.exports.middleware = logger => (req, res, next) => {
+    res.on('close', () => {
+
+        logger.info({
+            $meta: {
+
+                httpRequest: {
+                    status: res.statusCode,
+                    requestUrl: req.url,
+                    requestMethod: req.method,
+                    remoteIp: req.connection.remoteAddress,
+                    // etc.
+                }
+            }
+        }, req.path);
+    });
+    next();
+}
+
+function modArgs() {
+    const newArgs = [...arguments];
+    console.log(...['foo', ...newArgs.slice(1)]);
+}

@@ -29,7 +29,7 @@ module.exports = async function mode({ user, server, tags, parameters: [target, 
   let dest;
   let modeIsCode, isChannel = true;
 
-  if (['&', '#'].indexOf(leadChar) !== -1) {
+  if (server.chanTypes.indexOf(leadChar) !== -1) {
     const channel = await server.findChannel(target)
     if (!channel) {
       return user.send(server, ERR_NOSUCHCHANNEL,
@@ -58,72 +58,101 @@ module.exports = async function mode({ user, server, tags, parameters: [target, 
     return
   }
 
-  const action = modes[0]
-  let defaultReply = true;
-  if (['+', '-'].indexOf(action) === -1) defaultReply = false;
-  const modeChars = defaultReply ? modes.slice(1).split('') : modes.split('');
-  if (isChannel && action) {
-    const channel = dest;
-    if (!channel.hasOp(user)) {
-      user.send(server, ERR_CHANOPRIVSNEEDED,
-        [user.nickname, channel.name, ':You\'re not channel operator'])
-      return
-    }
-  }
-  if (await (server.validateMode(user, dest, modeChars, isChannel))) {
-    logger.debug("Mode chars:", modeChars);
-    modeChars.forEach((mode) => {
-      if (action === '+') {
-        dest.modes.add(mode, params)
-        // if (isChannel && mode === 'b') {
-        //   params.forEach(banned => {
-        //     user.onReceive(new Message(user, 'KICK', [target, banned, ":banned"]))
-        //   });
-        // }
-        if (isChannel && mode == 'b') {
-          params.forEach(banned => {
-            dest.meta.banned.set(banned.replace(/\./gi, '|dot|'), {
-              by: user.nickname,
-              at: Date.now() / 1000
-            })
-          })
-        }
-        if (isChannel && mode == 'I') {
-          params.forEach(invited => {
-            dest.meta.invited.set(invited.replace(/\./gi, '|dot|'), {
-              by: user.nickname,
-              at: Date.now() / 1000
-            })
-          })
-        }
-      } else if (action === '-') {
-        dest.modes.unset(mode, params)
-      } else if (isChannel) {
-        if (mode === 'I') {
-          (dest.modes.retrieve('I') || []).forEach(nick => {
-            const audit = dest?.meta?.invited?.get(nick.replace(/\./gi, '|dot|'));
-            let { by, at } = (audit || {});
-            by = by || 'n/a';
-            at = at || Date.now() / 1000;
-            user.send(server, RPL_INVITELIST, [mode, target, nick, by, at])
-          });
-          user.send(server, RPL_ENDOFINVITELIST, [mode, target, ":End of list"]);
-        } else if (mode == 'b') {
-
-          (dest.modes.retrieve('b') || []).forEach(nickmask => {
-            const audit = dest?.meta?.banned?.get(nickmask.replace(/\./gi, '|dot|'));
-            let { by, at } = (audit || {});
-            by = by || 'n/a';
-            at = at || Date.now() / 1000;
-            user.send(server, RPL_BANLIST, [mode, target, nickmask, by, at])
-          });
-          user.send(server, RPL_ENDOFBANLIST, [mode, target, ":End of list"]);
-
-        }
+  const i1 = modes.indexOf('+');
+  const i2 = modes.indexOf('-');
+  let viewOnly = i1 === -1 && i2 === -1;
+  let defaultReply = !viewOnly;
+  let chars1, chars2, anyChars;
+  if (i1 > i2) [chars1, chars2] = [modes.slice(i1), modes.slice(i2, i1)];
+  else
+    [chars1, chars2] = [modes.slice(i2), modes.slice(i1, i2)];
+  params = [...new Set(params)];
+  logger.trace()
+  await Promise.all([!viewOnly && chars1, !viewOnly && chars2, viewOnly && modes].filter(Boolean).map(async modes => {
+    logger.trace("Modes:", modes);
+    const action = modes[0]
+    const modeChars = defaultReply ? modes.slice(1).split('') : modes.split('');
+    if (isChannel && action) {
+      const channel = dest;
+      if (!channel.hasOp(user)) {
+        user.send(server, ERR_CHANOPRIVSNEEDED,
+          [user.nickname, channel.name, ':You\'re not channel operator'])
+        return
       }
-    })
+    }
+    if (await server.validateMode(user, dest, modeChars, isChannel)) {
+      logger.debug("Mode chars:", modeChars);
+      modeChars.forEach((mode) => {
+        if (action === '+') {
+          dest.modes.add(mode, params);
+          // if (isChannel && mode === 'b') {
+          //   params.forEach(banned => {
+          //     user.onReceive(new Message(user, 'KICK', [target, banned, ":banned"]))
+          //   });
+          // }
+          if (isChannel && mode == 'b') {
+            params.forEach(banned => {
+              dest.meta.banned.set(banned, {
+                by: user.nickname,
+                at: Date.now() / 1000
+              })
+            });
+            dest.changes('meta', true);
+          }
+          if (isChannel && mode == 'I') {
+            params.forEach(invited => {
+              dest.meta.invited.set(invited, {
+                by: user.nickname,
+                at: Date.now() / 1000
+              })
+            })
+            dest.changes('meta', true);
+          }
+        } else if (action === '-') {
+          dest.modes.unset(mode, params)
+          if (isChannel && mode == 'b') {
+            params.forEach(banned => {
+              dest.meta.banned.delete(banned);
+            });
+            dest.changes('meta', true);
+          }
+          if (isChannel && mode == 'I') {
+            params.forEach(invited => {
+              dest.meta.invited.delete(invited);
+            })
+            dest.changes('meta', true);
+          }
+        } else if (isChannel) {
+          if (mode === 'I') {
+            (dest.modes.retrieve('I') || []).forEach(nick => {
+              const audit = dest?.meta?.invited?.get(nick);
+              let { by, at } = (audit || {});
+              by = by || 'n/a';
+              at = at || Date.now() / 1000;
+              user.send(server, RPL_INVITELIST, [mode, target, nick, by, at])
+            });
+            user.send(server, RPL_ENDOFINVITELIST, [mode, target, ":End of list"]);
+          } else if (mode == 'b') {
 
-    defaultReply && dest.send(user, 'MODE', [target, modes, ...params], tags)
+            (dest.modes.retrieve('b') || []).forEach(nickmask => {
+              const audit = dest?.meta?.banned?.get(nickmask);
+              let { by, at } = (audit || {});
+              by = by || 'n/a';
+              at = at || Date.now() / 1000;
+              user.send(server, RPL_BANLIST, [mode, target, nickmask, by, at])
+            });
+            user.send(server, RPL_ENDOFBANLIST, [mode, target, ":End of list"]);
+
+          }
+        }
+      })
+
+    }
+  }));
+  if (isChannel && !viewOnly) {
+    await dest.modes.save();
+
   }
+  defaultReply && dest.send(user, 'MODE', [target, modes, ...params], tags)
 
 }

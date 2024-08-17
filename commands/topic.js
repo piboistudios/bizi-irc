@@ -5,8 +5,8 @@ const {
   ERR_CHANOPRIVSNEEDED
 } = require('../replies')
 
-function topic({ user, server, tags, parameters: [channelName, topic] }) {
-  let channel = server.findChannel(channelName)
+async function topic({ user, server, tags, parameters: [channelName, topic] }) {
+  let channel = await server.findChannel(channelName)
   if (channel) {
     // no new topic given, → check
     if (topic === undefined) {

@@ -58,8 +58,14 @@ class IRC extends EventEmitter {
 }
 
 IRC.Server = require('./server');
-IRC.createServer = options => {
-  return new IRC.Server(options);
+/**
+ * 
+ * @type {(...args:ConstructorParameters<(typeof import('./server'))>): import('./server')}
+ */
+const createServer = function() {
+  return new IRC.Server(...arguments);
 };
+
+IRC.createServer = createServer;
 
 module.exports = IRC;

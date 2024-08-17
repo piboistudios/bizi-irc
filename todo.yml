@@ -1,0 +1,22 @@
+- principal []:
+  - uid [X]
+  - verifypw [ ](pw)
+  - nickname [X]
+  - username [X]
+  - realname [X]
+- channel [X]
+- modes [X]
+- chatlog [X]
+- user [X]
+- channel [X]
+- modes [X]
+- commands [X]
+- server [ ]:
+  - server.authenticateAndFetchUser(gs2 context)
+  - finishBatch [x]
+  - saveChatLog [X]
+- chathistory [X]
+---
+- server/app:
+  - handle websocket properly [X]
+  

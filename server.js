@@ -4,7 +4,7 @@ const { debuglog } = require('util');
 const each = require('each-async');
 const writer = require('flush-write-stream');
 const User = require('./user');
-const Channel = require('./channel');
+const { Channel } = require('./channel');
 const Message = require('./message');
 const commands = require('./commands');
 const pkg = require('./package.json');
@@ -15,18 +15,20 @@ const debug = logger.debug;
 const crypto = require('crypto');
 const async = require('async');
 const ChatLog = require('./models/chatlog');
+const fmtRes = require('./features/fmt-res');
+const { Modes } = require('./modes');
 /**
  * Represents a single IRC server.
  */
-class Server extends require('tls').Server {
+class Server extends net.Server {
   /**
    * Creates a server instance.
    *
    * @see Server
    * @return {Server}
    */
-  static createServer(options, messageHandler) {
-    return new Server(options, messageHandler)
+  static createServer() {
+    return new Server(...arguments)
   }
 
   close() {
@@ -37,12 +39,17 @@ class Server extends require('tls').Server {
   /**
    * Create an IRC server.
    *
-   * @param {Object} options `net.Server` options.
-   * @param {function()} messageHandler `net.Server` connection listener.
+   * @param {import('net').ServerOpts & {
+   *  authHandlers: {
+   *    external: Server["authExternal"],
+   *    oauth2: Server["authenticateAndFetchUser"]
+   * },
+   *  messageHandler: Server["execute"]
+   * }} options `net.Server` options.
    */
-  constructor(options = {}, messageHandler, chatlog) {
+  constructor(options = {}) {
     super(options);
-    /**@type {import('mongoose').Document<any, any, any>[]} */
+    /**@type {Awaited<ReturnType<import('sequelize').ModelStatic<<import('sequelize').Model>["findOne"]>>[]} */
     this.docs = [];
     /**
      * @type {Object.<string, {type:String, batchParams: string[], ready: Boolean, user: import('./user'), commands: import('./message')[]}>}
@@ -50,27 +57,33 @@ class Server extends require('tls').Server {
     this.batches = {};
     logger.debug("options", options);
     this.dbSyncInterval = setInterval(() => {
-      logger.info("DB Sync");
+      // logger.info("DB Sync");
       // logger.debug("Checking docs for changes:", this.docs);
-      this.docs.forEach(d => {
-        const changes = d.getChanges();
+      this.docs.forEach(async d => {
+
         // logger.debug("changes for", d);
         // logger.debug("changes:", changes);
-        if (Object.keys(changes).length) {
-          // logger.info("Saving doc...", d);
-          d.save()
-            .catch(e => {
-              logger.error("Unable to save doc:", e);
-            })
-        }
+        // logger.info("Saving doc...", d);
+        // if (!d._modes && d.modes) {
+        //   await d.modes.save();
+        //   d._modes = d.modes.id;
+        // }
+        d.save()
+          .catch(e => {
+            logger.error("Unable to save doc:", e);
+          })
       });
     }, options.dbRefreshInterval || 1500 * 60);
+    this._authExternal = options.authHandlers.external;
+    this._authOauth2 = options.authHandlers.oauth2;
     this.users = [];
-    this.middleware = [];
+    this._middleware = [];
+    this._defaultHandlers = [];
     this.hostname = options.hostname;
     this.maxScrollbackSize = 64;
     this.chatBatchSize = 64;
     this.chatSaveInterval = (1000 * 60) * 15;
+    this.chanTypes = ['#', '&', '.']
     this.chatLogCommandWhitelist = [
       'PRIVMSG',
       'NOTICE',
@@ -81,20 +94,24 @@ class Server extends require('tls').Server {
       'QUIT',
       'MODE',
       'TOPIC',
+      'BATCH'
     ];
     this.botFlag = 'b';
     this.auth = {
       mechanisms: [
         'PLAIN',
-        'XOAUTH2'
+        'OAUTHBEARER',
+        'EXTERNAL'
       ]
     }
     this.isupport = [
+      'UTF8ONLY',
       'WHOX',
       'CHATHISTORY=64',
       'NAMELEN=32',
       'BOT=' + this.botFlag,
-      'CHANMODES=l,k,o,v,b,I'
+      'CHANMODES=l,k,o,v,b,I',
+      'CHANTYPES=' + this.chanTypes.join('')
     ];
     this.capabilities = [
       'multi-prefix',
@@ -102,7 +119,7 @@ class Server extends require('tls').Server {
       // 'account-notify',
       // 'batch',
       // 'invite-notify',
-      // 'echo-message'
+      'echo-message',
       // 'draft/event-playback',
       'draft/chathistory',
       // 'tls',
@@ -126,181 +143,204 @@ class Server extends require('tls').Server {
       { name: 'sasl', value: this.auth.mechanisms.join(',') },
 
     ];
-    this.motd = fs.readFileSync('MOTD').toString().split(EOL);
+    this.motd = fs.readFileSync(__dirname + '/MOTD').toString().split(EOL);
     this.created = new Date();
-    /**@type {Map<string, import('./channel')>} */
+    /**@type {Map<string, import('./channel').Channel>} */
     this.channels = new Map();
     this.hostname = options.hostname || 'localhost';
-    /**
-     *  @type {import('mongoose').Document<unknown, any, {
-      *     timestamp: Date;
-      *     messages: {
-      *         parameters: string[];
-      *         user?: string | undefined;
-      *         prefix?: string | undefined;
-      *         command?: string | undefined;
-      *         tags?: any;
-      *     }[];
-      * }> & {
-      *     timestamp: Date;
-      *     messages: {
-      *         parameters: string[];
-      *         user?: string | undefined;
-      *         prefix?: string | undefined;
-      *         command?: string | undefined;
-      *         tags?: any;
-      *     }[];
-      * }} */
-    this.mkChatLog()
-      .then(l => {
-        this.chatlog = l
 
-        this.addCnx = sock => {
-          const user = new User(sock, this);
-          logger.debug('USER', user);
-          this.users.push(user);
-          this.emit('user', user);
-          return user;
-        }
-        this.removeCnx = user => {
-          user.onReceive(new Message(null, 'QUIT', []));
-        }
-        this.on('secureConnection', this.addCnx);
 
-        this.on('user', async user => {
-          if (!user.initialized) await user.setup();
-          // const logger = mkLogger('user');
-          // logger.debug("User added", user);
-          // user.on('data', d => {
-          //   logger.debug(d);
-          // });
-          user.pipe(writer.obj((message, enc, cb) => {
-            logger.debug("MESSAGE");
-            this.emit('message', message, user);
-            cb();
-          }));
-        });
+    this.addCnx = sock => {
+      const user = new User(sock, this);
+      logger.debug('USER', user);
+      this.emit('user', user);
+      return user;
+    }
+    this.removeCnx = user => {
+      this.emit('message', new Message(user, 'QUIT', []), user);
+    }
+    this.on('connection', this.addCnx);
 
-        this.on('message', async message => {
-          await this.execute(message);
-          if (message.user)
-            message.user.sync();
-          // debug('message', message + '');
-        });
+    this.on('user', async user => {
+      logger.trace("User?", user);
+      this.users.push(user);
+      if (!user.initialized) await user.setup();
+      // const logger = mkLogger('user');
+      // logger.debug("User added", user);
+      // user.on('data', d => {
+      //   logger.debug(d);
+      // });
+      user.pipe(writer.obj((message, enc, cb) => {
+        logger.debug("MESSAGE");
+        this.emit('message', message, user);
+        cb();
+      }));
+    });
 
-        const authedCommands = [
-          'JOIN',
-          'KICK',
-          'PRIVMSG',
-          'TAGMSG',
-          'BATCH',
-          'NOTICE',
-          'INVITE',
-          'AWAY',
-          'PING',
-          'QUIT',
-          'SETNAME',
-          'CHATHISTORY',
-          'NICK',
-          'TOPIC',
-        ];
+    this.on('message', async message => {
+      await this.execute(message);
+      if (message.user)
+        message.user.sync();
+      // debug('message', message + '');
+    });
 
-        authedCommands.forEach(cmd => {
-          this.use(cmd, async function ({ user }, _, halt) {
-            logger.info("auth check... authorized?", !!user.principal);
-            if (!user.principal) return halt(new Error("Unauthorized"));
-          });
-        });
-        for (const command in commands) {
-          const fn = commands[command];
-          this.use(command, fn);
-        }
 
-        if (messageHandler) {
-          this.on('message', messageHandler);
-        }
 
-        debug('server started')
-      })
-      .catch(e => {
-        logger.fatal("Unable to get chat log:", e);
-      })
+
+    for (const command in commands) {
+      const fn = commands[command];
+      this._defaultHandlers.push({ command, fn });
+    }
+
+    if (options.messageHandler) {
+      this.on('message', options.messageHandler);
+    }
+
+    debug('server started')
+
+
+
+
   }
+  /**
+   * @param {import('./user')} user
+   * @return {{
+   *  uid: string,
+   *  username: string,
+   *  nickname: string,
+   *  realname: string,
+   *  password?: string,
+   * }}
+   */
+  async authExternal(user) {
+    return this._authExternal && this._authExternal(user);
+  }
+  /**
+   * Validate the provided OAUTHBEARER token and return a user
+   * @param {{
+   *  host: String,
+   *  port: String,
+   *  auth: String
+   * }} ctx
+   * @param {import('./user')} user
+   * @return {{
+   *  uid: string,
+  *  username: string,
+  *  nickname: string,
+  *  realname: string,
+  *  password?: string,
+  * }}
+   */
+  async authenticateAndFetchUser(ctx, user) {
+    try {
+
+      return this._authOauth2(ctx, user);
+    } catch (e) {
+      logger.error("Error authenticating/fetching user:", e, e?.response && fmtRes(e.response) || '')
+      return null;
+    }
+  }
+  async sendTo(target, msg) {
+    const server = this;
+    if (server.chanTypes.includes(target[0])) {
+      const chan = await server.findChannel(target)
+      if (chan) {
+        chan.broadcast(msg)
+      }
+    } else {
+      const user = await server.findUser(target)
+      if (user) {
+        user.send(msg)
+      }
+    }
+  }
+
   async validateMode(user, dest, modeChars, isChannel) {
     return true;
   }
   async finishBatch(id) {
     logger.info("Finishing batch", id);
+    logger.info("Batches", this.batches);
     const { user, commands, batchParams } = this.batches[id];
     /**@todo validate commands, send errors to user */
     logger.debug("Batch commands:", commands.length);
-    const message = {
-      batch: commands.map(m => ({
-        prefix: Boolean(m.prefix) ? m.prefix : undefined,
-        command: m.command,
-        parameters: m.parameters,
-        tags: m.tags,
-      })),
-    }
-    this.chatlog.messages.push(message);
-    try {
+    // const message = {
+    //   batch: commands.map(m => ({
+    //     prefix: Boolean(m.prefix) ? m.prefix : undefined,
+    //     command: m.command,
+    //     parameters: m.parameters,
+    //     tags: m.tags,
+    //   })),
+    // }
+    // this.chatlog.messages.push(message);
+    // try {
 
-      if (this.chatlog.messages.length >= this.chatBatchSize) {
-        this.chatlog = await this.mkChatLog();
-      }
-    } catch (e) {
-      logger.error("Unable to save chat logs:", e);
-    }
+    //   if (this.chatlog.messages.length >= this.chatBatchSize) {
+    //     this.chatlog = await this.mkChatLog();
+    //   }
+    // } catch (e) {
+    //   logger.error("Unable to save chat logs:", e);
+    // }
     this.batches[id].ready = true;
-    const [target] = batchParams;
+    // const [target] = batchParams;
 
-    const chan = await this.findChannel(target);
-    const targetUser = !chan ? await this.findUser(target) : null;
-    await async.series(commands.map(command => async.asyncify(() => {
+    // const chan = await this.findChannel(target);
+    // const targetUser = !chan ? await this.findUser(target) : null;
+    await async.series(commands.slice(1, -1).map(command => async.asyncify(async () => {
       logger.sub('BATCH').debug(id, "executing", command);
-
-      logger.debug("Channel found?", !!chan);
-      if (chan) {
-        return chan.broadcast(command);
-      } else {
-        if (targetUser) {
-          return targetUser.send(command);
-        }
-      }
+      await this.execute(command);
+      // logger.debug("Channel found?", !!chan);
+      // if (chan) {
+      //   return chan.broadcast(command);
+      // } else {
+      //   if (targetUser) {
+      //     return targetUser.send(command);
+      //   }
+      // }
     })))
 
     delete this.batches[id];
   }
-  async mkChatLog() {
-    if (this.chatlog) await this.chatlog.save();
-    if (this.chatLogInterval) clearInterval(this.chatLogInterval);
-    this.chatLogInterval = setInterval(async () => {
-      if (!this?.chatlog?.messages?.length) return;
-      await this.chatlog.save();
-      this.chatlog = await this.mkChatLog();
-    }, this.chatSaveInterval);
+  // async mkChatLog() {
+  //   if (this.chatlog) await this.chatlog.save();
+  //   if (this.chatLogInterval) clearInterval(this.chatLogInterval);
+  //   this.chatLogInterval = setInterval(async () => {
+  //     if (!this?.chatlog?.messages?.length) return;
+  //     await this.chatlog.save();
+  //     this.chatlog = await this.mkChatLog();
+  //   }, this.chatSaveInterval);
 
-    return new ChatLog();
-  }
+  //   return new ChatLog();
+  // }
+  /**
+   * 
+   * @param {*} m 
+   * @returns
+   * @todo REIMPLEMENT 
+   */
   async saveToChatLog(m) {
     try {
-      if (m instanceof Message && !m.ephemeral && !m?.tags?.batch) {
+      if (m instanceof Message && !m.ephemeral) {
         if (this.chatLogCommandWhitelist.indexOf(m?.command.toString().toUpperCase()) === -1) return;
-        if (this.chatlog.messages.find(m2 => m.tags?.msgid && m.tags.msgid === m2.tags?.msgid)) return;
+        // if (this.chatlog.messages.find(m2 => m.tags?.msgid && m.tags.msgid === m2.tags?.msgid)) return;
         logger.debug("saving to chat log...", m);
-        const message = {
-          prefix: Boolean(m.prefix) ? m.prefix : undefined,
-          command: m.command,
+        const message = new ChatLog({
+          user: m?.user?.principal?.uid,
+          prefix: m.prefix ? m.prefix : null,
+          command: m.command.toUpperCase(),
           parameters: m.parameters,
           tags: m.tags,
-          user: m?.user?.principal?.uid
-        };
+          timestamp: new Date(m.tags.time || Date.now()),
+          target: m.target
+        });
         logger.debug("existing log entries...", this.chatlog);
         logger.debug("chat batch size:", this.chatBatchSize);
-        this.chatlog.messages.push(message);
-        if (this.chatlog.messages.length >= this.chatBatchSize) {
-          this.chatlog = await this.mkChatLog();
-        }
+
+        return message.save();
+        // this.chatlog.messages.push(message);
+        // if (this.chatlog.messages.length >= this.chatBatchSize) {
+        //   this.chatlog = await this.mkChatLog();
+        // }
       }
       else logger.sub('saveToChatLog').warn("Ignoring message:", m, "EPHEMERAL?", m.ephemeral, "BATCH?", !m?.tags?.batch);
     } catch (e) {
@@ -363,11 +403,14 @@ class Server extends require('tls').Server {
    *
    * @return {User|undefined} Relevant User object if found, `undefined` if not found.
    */
-  async findUser(nickname) {
+  async findUser(nickname, online) {
+    if (!nickname) return;
     nickname = normalize(nickname)
     const memUser = this.users.find(user => user.nickname && normalize(user.nickname) === nickname);
     if (memUser) return memUser;
+    else if(online) return null;
     const principal = await require('./models/user').findOne({ nickname: nickname });
+    if (!principal) return null;
     const user = new User(null, this);
     user.nickname = nickname;
     user.principal = principal;
@@ -379,14 +422,22 @@ class Server extends require('tls').Server {
    *
    * @param {string} channelName Channel name.
    *
-   * @return {Channel|undefined} Relevant Channel object if found, `undefined` if not found.
+   * @return {import('./channel').Channel} Relevant Channel object if found, `undefined` if not found.
    */
   async findChannel(channelName) {
     const memChannel = this.channels.get(normalize(channelName));
     if (memChannel) return memChannel;
-    const channel = await Channel.findOne({ name: channelName }).populate('modes');
-    if (channel) {
+    const channel = (await Channel.findOne({ where: { name: channelName } }));
 
+    if (channel) {
+      let modes = (await Modes.findByPk(channel._modes));
+      if (!modes) {
+        const flagModeChars = ['p', 's', 'i', 't', 'n', 'm']
+        const paramModeChars = ['l', 'k']
+        const listModeChars = ['o', 'v', 'b', 'I', 'h']
+        modes = await Modes.mk({ flagModeChars, paramModeChars, listModeChars });
+      }
+      channel.modes = modes;
       this.channels.set(channelName, channel);
       channel.server = this;
       channel.users = [];
@@ -403,7 +454,9 @@ class Server extends require('tls').Server {
         } else {
 
           if (!channel.meta.banned) channel.meta.banned = new Map();
+          else channel.meta.banned = new Map(Object.entries(channel.meta.banned));
           if (!channel.meta.invited) channel.meta.invited = new Map();
+          else channel.meta.invited = new Map(Object.entries(channel.meta.invited));
         }
         this.docs.push(channel.modes);
       }
@@ -423,15 +476,21 @@ class Server extends require('tls').Server {
    */
   async createChannel(channelName) {
     channelName = normalize(channelName)
-    if (!Channel.isValidChannelName(channelName)) {
-      throw new Error('Invalid channel name')
+    if (!Channel.isValidChannelName(channelName, this)) {
+      throw new Error('Invalid channel name: ' + channelName)
     }
 
+    const ret = await Channel.mk({ name: channelName, server: this });
     if (!this.channels.has(channelName)) {
-      this.channels.set(channelName, await Channel.mk({ name: channelName, server: this }))
+      this.channels.set(channelName, ret)
     }
-
-    return this.channels.get(channelName)
+    await ret.modes.save();
+    ret._modes = ret.modes.id;
+    ret._isNew = true;
+    ret.addFlag('n')
+    await ret.save();
+    logger.trace("NEW CHANNEL", ret);
+    return ret;
   }
 
   /**
@@ -442,7 +501,7 @@ class Server extends require('tls').Server {
    * @return {Channel} The Channel.
    */
   async getChannel(channelName) {
-    if (!Channel.isValidChannelName(channelName)) return;
+    if (!Channel.isValidChannelName(channelName, this)) return;
     return (await this.findChannel(channelName)) || await this.createChannel(channelName);
   }
 
@@ -462,13 +521,16 @@ class Server extends require('tls').Server {
       [command, fn] = ['', command]
     }
     debug('register middleware', command)
-    this.middleware.push({ command, fn })
+    this._middleware.push({ command, fn })
+  }
+  get middleware() {
+    return this._middleware.concat(this._defaultHandlers);
   }
   /**
    * 
    * @param {import('./message')} message 
    * @param {*} cb 
-   * @returns 
+   * @returns {Promise<void>}
    */
   execute(message) {
 
@@ -485,7 +547,8 @@ class Server extends require('tls').Server {
     const locals = {};
     let nextCalled = false;
     return async.detectSeries(this.middleware, (mw, next) => {
-      if (mw.command === '' || mw.command === message.command) {
+      logger.trace(mw);
+      if (mw.command === '' || mw.command.toLowerCase() === message.command.toLocaleLowerCase()) {
         debug('executing', mw.command, message.parameters)
         return Promise.resolve()
           .then(() => mw.fn(message, locals, (e) => {
@@ -498,6 +561,9 @@ class Server extends require('tls').Server {
             } else {
               nextCalled = false;
             }
+          })
+          .catch(e => {
+            logger.fatal("Error executing command:", message.toString(), ":", e);
           })
       } else next(null, false);
     })

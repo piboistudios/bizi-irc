@@ -34,6 +34,11 @@ module.exports = async function invite({ tags, user, server, parameters: [nickna
         }
       });
     }
+    channel.meta.invited.set(nickname, {
+      by: user.nickname,
+      at: Date.now() / 1000
+    });
+
   } else {
     logger.error("Target not found");
   }

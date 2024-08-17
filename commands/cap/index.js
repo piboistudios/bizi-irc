@@ -18,9 +18,9 @@ module.exports = function cap({ user, server, parameters: [verb, ...args] }) {
 
   logger.debug('CAP', verb, args);
 
-  switch (verb) {
+  switch (verb.toUpperCase()) {
     case 'LS':
-      if (args.length < 1) return user.send(server, ERR_INVALIDCAPCMD, [':Invalid arguments']);
+      // if (args.length < 1) return user.send(server, ERR_INVALIDCAPCMD, [':Invalid arguments']);
       ls(user, server, args[0])
       break;
     case 'REQ':
@@ -31,7 +31,9 @@ module.exports = function cap({ user, server, parameters: [verb, ...args] }) {
       list(user, server);
       break;
     case 'END':
-      return server.welcome(user);
+      logger.trace("ENDING CAP", user.principal);
+      logger.trace("USER", user);
+      return user.principal && server.welcome(user);
   }
   // if (!nickname || nickname.length === 0) {
   //   return user.send(server, ERR_NONICKNAMEGIVEN, ['No nickname given']);

@@ -25,7 +25,7 @@ async function join(opts) {
   }
 
   for (const channelName of channelNames.split(',')) {
-    const channel = await server.getChannel(channelName)
+    const channel = (await server.getChannel(channelName));
     if (channel) {
 
       if (!channel.modes.has('q', user.nickname)) {

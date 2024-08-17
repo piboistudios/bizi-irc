@@ -29,6 +29,7 @@ module.exports = function away({ user, server, parameters }) {
   const [msg] = parameters;
   user.away = msg.length ? msg : null;
   user.channels.forEach(c => {
-    c.broadcast(user, "AWAY", [msg].filter(Boolean));
+    
+    c.broadcast(user, "AWAY", [msg].filter(Boolean), null, ['away-notify']);
   });
 };

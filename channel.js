@@ -1,39 +1,53 @@
 const Modes = require('./modes');
 const Message = require('./message');
-const { debuglog } = require('util');
-const { Schema, default: mongoose } = require('mongoose');
+// const { debuglog } = require('util');
+// const { Schema, default: mongoose } = require('mongoose');
+const { Sequelize, Model } = require('sequelize');
+const { mkLogger } = require('./logger');
+const { db } = require('./state');
+const logger = mkLogger("modes");
+// see: https://libera.chat/guides/channelmodes
+const flagModeChars = 'psitnmcCFgQrRTu'.split('')
+const paramModeChars = 'lkfjk'.split('')
+const listModeChars = 'ovhaqeIbq'.split('')
+// /**
+//  * @type {import('sequelize').Model}
+//  */
+// const debug = debuglog('ircs:Channel');
+// const schema = new Schema({
+//   name: String,
+//   topic: String,
+//   modes: {
+//     type: Schema.Types.ObjectId,
+//     ref: "Modes"
+//   },
+//   meta: {
+//     banned: {
+//       type: Map,
+//       of: {
+//         by: String,
+//         at: Number
+//       }
+//     },
+//     invited: {
+//       type: Map,
+//       of: {
+//         by: String,
+//         at: Number
+//       }
+//     }
+//   }
 
-const debug = debuglog('ircs:Channel');
-const schema = new Schema({
-  name: String,
-  topic: String,
-  modes: {
-    type: Schema.Types.ObjectId,
-    ref: "Modes"
-  },
-  meta: {
-    banned: {
-      type: Map,
-      of: {
-        by: String,
-        at: Number
-      }
-    },
-    invited: {
-      type: Map,
-      of: {
-        by: String,
-        at: Number
-      }
-    }
-  }
-
-});
+// });
 
 /**
  * Represents an IRC Channel on the server.
  */
-class Channel {
+class Channel extends Sequelize.Model {
+  /**
+   * @type {import('./server')}
+   */
+  server;
   /**
    * Create a new channel.
    *
@@ -41,10 +55,10 @@ class Channel {
    */
 
 
-  static isValidChannelName(name) {
+  static isValidChannelName(name, server) {
     // https://tools.ietf.org/html/rfc1459#section-1.3
     return name.length <= 200 &&
-      (name[0] === '#' || name[0] === '&') &&
+      (server.chanTypes.includes(name[0])) &&
       name.indexOf(' ') === -1 &&
       name.indexOf(',') === -1 &&
       name.indexOf('\x07') === -1 // ^G
@@ -75,7 +89,7 @@ class Channel {
       user.join(this);
       this.users.push(user);
     }
-    if (this.users.length === 1) {
+    if (this._isNew && this.users.length === 1) {
       this.addOp(user);
       this.addHalfOp(user);
       this.modes.add('q', user.nickname);
@@ -110,39 +124,43 @@ class Channel {
     return this.users.indexOf(user) !== -1
   }
 
+
   /**
    * Sends a message to all users in a channel, including the sender.
    *
    * @param {Message} message Message to send.
    */
   async send(message) {
+    logger.trace("modes:", this.modes);
     if (!(message instanceof Message)) {
-      message = new Message(...arguments);
+      message = new Message(...arguments)
     }
-    let sent = false;
-    await Promise.all(this.users.map((u) => {
-      sent = true;
-      return u.send(message);
-    }));
-    if (!sent) await this.server.saveToChatLog(message);
+    return this.broadcast(message, true);
   }
-
   /**
    * Broadcasts a message to all users in a channel, except the sender.
-   *
-   * @param {Message} message Message to send.
-   */
-  async broadcast(message) {
+   * @overload
+   * @param {string|Object|null} prefix Message prefix. (Optional.)
+   * @param {string} command Command name.
+   * @param {Array.<string>} parameters IRC Command parameters.
+   * @param {any} tags
+   * @param {string[]} requirements
+   *//**
+* 
+* @overload
+* @param {Message} message Message to send.
+*/
+  async broadcast(message, self = false) {
     if (!(message instanceof Message)) {
       message = new Message(...arguments)
     }
     let sent = false;
-    await Promise.all(this.users.map((u) => {
-      if (!u.matchesMask(message.prefix)) {
+    await Promise.all(this.users.map(async (u) => {
+      if (self || !u.matchesMask(message.prefix)) {
         sent = true;
         return u.send(message);
       }
-      return Promise.resolve(true);
+      return;
     }));
     if (!sent) await this.server.saveToChatLog(message);
   }
@@ -244,6 +262,10 @@ class Channel {
     return this.modes.has('m')
   }
 
+  get isNoExternalMessages() {
+    return this.modes.has('n')
+  }
+
 
   inspect() {
     return this.toString();
@@ -256,37 +278,41 @@ class Channel {
               ${this.users.map(u => `- ${u.nickname}`).join('\n')}
     `;
   };
-}
-schema.loadClass(Channel);
-/**
- * @class Channel
- */
-const model = mongoose.model("Channel", schema);
-model.mk = async function mk({ name, server }) {
-  const opts = {};
-  opts.name = name
-  // opts.invited = [];
-  // opts.banned = [];
-  opts.topic = null
-  const flagModeChars = ['p', 's', 'i', 't', 'n', 'm']
-  const paramModeChars = ['l', 'k']
-  const listModeChars = ['o', 'v', 'b', 'I']
-  opts.modes = await Modes.mk({ flagModeChars, paramModeChars, listModeChars });
-  
-  opts.meta = {
-    banned: {},
-    invited: {}
+  static async _mk({ name, server }) {
+    const opts = {};
+    opts.name = name
+    opts.topic = null
+    const modes = await Modes.mk({
+      flagModeChars,
+      paramModeChars,
+      listModeChars
+    });
+    opts._modes = modes.id;
+
+    opts.meta = {
+      banned: {},
+      invited: {}
+    }
+    /**
+     * @type {Channel & Awaited<ReturnType<ReturnType<import('./models/channel')>["findOne"]>>}
+     */
+    const channel = new Channel(opts);
+    channel.users = [];
+    channel.modes = modes;
+    channel.server = server;
+    channel.server.docs.push(channel, modes);
+    global.chan = channel;
+    await channel.save();
+    return channel;
+
   }
-  const channel = new model(opts);
-  await channel.save();
-  /**@type {import('./user')[]} */
-  channel.users = [];
-  /**@type {import('./server')} */
-  channel.server = server;
-  channel.server.docs.push(channel, opts.modes);
-  global.chan = channel;
-  return channel;
-
 }
-
-module.exports = model;
+// const model = require('./models/channel')(Channel)
+// Object.setPrototypeOf(Channel, Channel.sequelize.Sequelize.Model)
+// Object.setPrototypeOf(Modes, Modes.sequelize.Sequelize.Model)
+// logger.trace("MODEL", Channel.prototype instanceof Channel.sequelize.Sequelize.Model, Model === Sequelize.Model, Model === Channel.sequelize.Sequelize.Model);
+// Channel.hasOne(Modes.Modes, { sourceKey: "modes", foreignKey: "id" })
+// Modes.Modes.belongsTo(Channel, { targetKey: "modes", foreignKey: "id" })
+// module.exports = model;
+module.exports = require('./models/channel')(Channel);
+module.exports.Channel = Channel;

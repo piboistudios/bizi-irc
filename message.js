@@ -9,9 +9,15 @@ const batchTargets = {};
  */
 class Message {
   /**
+   * @type {import('./server')}
+   */
+  server;
+  /**
    * @param {string|Object|null} prefix Message prefix. (Optional.)
    * @param {string} command Command name.
    * @param {Array.<string>} parameters IRC Command parameters.
+   * @param {any} tags
+   * @param {string[]} requirements
    */
   constructor(prefix, command, parameters, tags, requirements = []) {
     const maybeUser = prefix;
@@ -29,7 +35,7 @@ class Message {
      * Command, i.e. what this message actually means to us!
      * @member {string}
      */
-    this.command = command
+    this.command = '' + command;
     this.ephemeral = false;
     /**@type {string} */
     this.batchId = undefined;
@@ -48,7 +54,9 @@ class Message {
      * @member {Object.<string>}
      */
     this.tags = tags || {};
-    this.tags.msgid = this.tags.msgid || randomUUID()
+    const batchId = this.command === 'BATCH' && this.parameters[0].slice(1);
+    this.tags.msgid = batchId || this.tags.msgid || ((!this.tags.batch || this.command.toUpperCase().indexOf("BATCH") === 0) && randomUUID()) || undefined;
+
     this.requirements = requirements;
 
     if (!this.tags.time) {
@@ -73,6 +81,9 @@ class Message {
     }
     // logger.debug("Created message:", { tags, prefix, command, parameters });
   }
+  sendTo(target) {
+    return this.server.sendTo(target, this);
+  }
 
   /**
    * Compiles the message back down into an IRC command string.
@@ -82,7 +93,7 @@ class Message {
   toString() {
     let tagStr = '';
     if (this.tags) {
-      tagStr = Object.entries(this.tags).map(([key, value]) => `${key}=${value}`).join(';');
+      tagStr = Object.entries(this.tags).filter(([k, v]) => v !== undefined).map(([key, value]) => `${key}=${value || ''}`).join(';');
       if (tagStr.length) tagStr = '@' + tagStr;
     }
     let ret = (this.prefix ? `:${this.prefix} ` : '') +
@@ -95,7 +106,7 @@ class Message {
   }
 
   get target() {
-    if (this.command === 'BATCH') return this._target || this.parameters[this.parameters.length-1];
+    if (this.command === 'BATCH') return this._target || this.parameters[this.parameters.length - 1];
     else return this.parameters[0];
   }
 }

@@ -1,33 +1,13 @@
+const { Model, Sequelize } = require('sequelize');
+
 const logger = require('./logger').mkLogger('ircs:modes');
 
-// const isFlagMode = (mode) => flagModeChars.indexOf(mode) !== -1
-// const isParamMode = (mode) => paramModeChars.indexOf(mode) !== -1
 
-const { Schema, default: mongoose } = require("mongoose");
+class Modes extends Sequelize.Model {
 
-// const isListMode = (mode) => listModeChars.indexOf(mode) !== -1
-const schema = new Schema({
-  flagModeChars: [String],
-  paramModeChars: [String],
-  listModeChars: [String],
-  flagModes: {
-    type: Map,
-    of: Boolean
-  },
-  paramModes: {
-    type: Map,
-    of: String
-  },
-  listModes: {
-    type: Map,
-    of: [String]
-  }
-});
-class Modes {
-
-  isFlagMode(mode) { return this.flagModeChars.indexOf(mode) !== -1 }
+  isFlagMode(mode) { return  this.flagModeChars.indexOf(mode) !== -1 }
   isParamMode(mode) { return this.paramModeChars.indexOf(mode) !== -1 }
-  isListMode(mode) { return this.listModeChars.indexOf(mode) !== -1 }
+  isListMode(mode) { return  this.listModeChars.indexOf(mode) !== -1 }
   /**
    * 
    * @param {string} mode 
@@ -35,11 +15,14 @@ class Modes {
    */
   add(mode, params = []) {
     if (this.isFlagMode(mode)) {
-      this.flagModes.set(mode, true)
+      this.flagModes[mode] = true;
+      this.changed('flagModes', true);
     } else if (this.isParamMode(mode)) {
-      this.paramModes.set(mode, params[0])
+      this.paramModes[mode] = params[0]
+      this.changed('paramModes', true);
     } else if (this.isListMode(mode)) {
-      this.listModes.set(mode, (this.listModes[mode] || []).concat(params))
+      this.listModes[mode] = (this.listModes[mode] || []).concat(params)
+      this.changed('listModes', true);
     }
   }
   /**
@@ -49,12 +32,15 @@ class Modes {
    */
   unset(mode, params = []) {
     if (this.isFlagMode(mode)) {
-      delete this.flagModes.get(mode)
+      delete this.flagModes[mode]
+      this.changed('flagModes', true);
     } else if (this.isParamMode(mode)) {
-      delete this.paramModes.get(mode)
+      delete this.paramModes[mode]
+      this.changed('paramModes', true);
     } else if (this.isListMode(mode)) {
       const shouldKeep = (param) => params.every((remove) => param !== remove)
-      this.listModes.set(mode, (this.listModes[mode] || []).filter(shouldKeep));
+      this.listModes[mode] = (this.listModes[mode] || []).filter(shouldKeep)
+      this.changed('listModes', true);
     }
   }
   /**
@@ -63,11 +49,11 @@ class Modes {
    */
   retrieve(mode) {
     if (this.isFlagMode(mode)) {
-      return !!this.flagModes.get(mode)
+      return !!this.flagModes[mode]
     } else if (this.isParamMode(mode)) {
-      return this.paramModes.get(mode)
+      return this.paramModes[mode]
     } else if (this.isListMode(mode)) {
-      return this.listModes.get(mode)
+      return this.listModes[mode]
     }
   }
   /**
@@ -79,9 +65,9 @@ class Modes {
     if (this.isFlagMode(mode)) {
       return this.retrieve(mode)
     } else if (this.isParamMode(mode)) {
-      return this.paramModes.get(mode) != null
+      return this.paramModes[mode] != null
     } else if (this.isListMode(mode) && param) {
-      const list = this.listModes.get(mode)
+      const list = this.listModes[mode]
       return list && list.indexOf(param) !== -1
     }
     return false
@@ -106,34 +92,32 @@ class Modes {
     }
     return str
   }
+  /**
+   * 
+   * @param {*} param0 
+   * @returns {ReturnType<ReturnType<typeof import('./models/modes')>["Instance"]}
+   */
+  static async _mk(o = {}) {
+    let { flagModeChars, paramModeChars, listModeChars } = o;
+    flagModeChars ??= ['p', 's', 'i', 't', 'n', 'm', 'b']
+    paramModeChars ??= ['l', 'k']
+    listModeChars ??= ['o', 'v']
+    const opts = {
+      flagModeChars: flagModeChars,
+      paramModeChars: paramModeChars,
+      listModeChars: listModeChars,
+      flagModes: {},
+      paramModes: {},
+      listModes: {}
+    };
+    const modes = new Modes(opts);
+    return modes;
+  }
 }
 
 // Modes.isFlagMode = isFlagMode
 // Modes.isParamMode = isParamMode
 // Modes.isListMode = isListMode
-schema.loadClass(Modes);
-schema.pre("save", function (next) {
-  if (!this.flagModes) this.flagModes = {};
-  if (!this.paramModes) this.paramModes = {};
-  if (!this.listModes) this.listModes = {};
-  next();
-
-})
-const model = mongoose.model("Modes", schema);
-model.mk = async function mk({ flagModeChars, paramModeChars, listModeChars }) {
-  const opts = {
-    flagModeChars: flagModeChars,
-    paramModeChars: paramModeChars,
-    listModeChars: listModeChars,
-    flagModes: {},
-    paramModes: {},
-    listModes: {}
-  };
-  const modes = new model(opts);
-  modes.flagModes = {};
-  modes.paramModes = {};
-  modes.listModes = {};
-  await modes.save();
-  return modes;
-}
+const model = require('./models/modes')(Modes);
 module.exports = model;
+module.exports.Modes = Modes;

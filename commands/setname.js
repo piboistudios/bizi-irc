@@ -11,7 +11,8 @@ const debug = debuglog('ircs:commands:setname')
  * }} param0 
  * @returns 
  */
-module.exports = function setname({ user, server, tags, parameters: [realname] }) {
+module.exports = function setname(msg) {
+  let { user, server, tags, parameters: [realname] } = msg;
   if (!user.principal) return;
   realname = realname.trim()
 
@@ -25,7 +26,8 @@ module.exports = function setname({ user, server, tags, parameters: [realname] }
   }
 
   user.realname = realname;
-  const msg = new Message(user, 'SETNAME', [realname], tags)
-  user.send(msg)
-  user.channels.forEach(chan => chan.broadcast(msg));
+  if (user.principal) user.principal.realname = realname;
+  const reply = new Message(user, "SETNAME", [":" + user.realname], {})
+  user.send(reply)
+  user.channels.forEach(chan => chan.broadcast(reply));
 }

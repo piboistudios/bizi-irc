@@ -1,31 +1,35 @@
-const mongoose = require('mongoose'),
-    Schema = mongoose.Schema,
-    ObjectId = Schema.ObjectId,
-    Message = require('../message')
+const { Sequelize, DataTypes, InferAttributes, InferCreationAttributes, Model } = require('sequelize');
+const { db } = require('../state');
+const h = require('./helpers/typed-define');
 
-const chatLog = new Schema({
-    timestamp: {
-        type: Date,
-        default: () => new Date()
+
+
+const ATTRIBUTES =  /**@type {const}*/({
+
+    user: { type: { name: "STRING" } },
+    prefix: { type: { name: "STRING" } },
+    target: { type: { name: "STRING" } },
+    timestamp: { type: { name: "DATE" } },
+    command: { type: { name: "STRING" } },
+    parameters: { type: { name: "JSON" } },
+    tags: { type: { name: "JSON" } },
+})
+/**
+ * 
+ */
+// [{
+//     prefix: String,
+//     command: String,
+//     parameters: [String],
+//     tags: {},
+// }]
+
+const ChatLog = h(
+    'ChatLog',
+    ATTRIBUTES,
+    {
+        // Other model options go here
     },
-    messages: {
-        type: [{
-            user: String,
-            prefix: String,
-            command: String,
-            parameters: [String],
-            tags: {},
-            batch: {
-                type: [{
-                    prefix: String,
-                    command: String,
-                    parameters: [String],
-                    tags: {},
-                }], default: () => null
-            }
-        }],
-        default: []
-    }
-});
+);
 
-module.exports = mongoose.model("ChatLog", chatLog);
+module.exports = ChatLog;

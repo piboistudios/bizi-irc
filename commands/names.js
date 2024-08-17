@@ -20,9 +20,10 @@ module.exports = async function names({ user, server, parameters: [channelName] 
       return mode + un
     })
 
-    const myMode = channel.hasOp(user) ? '@'
-      : channel.hasVoice(user) ? '+' : '='
-    user.send(server, RPL_NAMREPLY, [user.nickname, myMode, channel.name, ...names])
+    const symbol = channel.isSecret ? '@' : channel.isPrivate ? '*' : '=';
+    names.forEach(name => {
+      user.send(server, RPL_NAMREPLY, [user.nickname, symbol, channel.name, name])
+    });
     user.send(server, RPL_ENDOFNAMES, [user.nickname, channel.name, ':End of /NAMES list.'])
   }
 }

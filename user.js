@@ -1,24 +1,27 @@
 const async = require('async');
-const { debuglog } = require('util');
+// const { debuglog } = require('util');
 const to = require('flush-write-stream');
-const Parser = require('./parser');
 const minimatch = require('minimatch');
 const Message = require('./message');
 const { Duplex } = require('stream');
 const { mkLogger } = require('./logger');
-const rand = require("generate-key");
+// const rand = require("generate-key");
 const Modes = require('./modes');
+const { inspect } = require('util');
 const logger = mkLogger('user');
 const debug = logger.debug;
+
+// see: https://libera.chat/guides/usermodes
+const flagModeChars = 'DgGiIQRuwz'.split('');
+const paramModeChars = [];
+const listModeChars = [];
 
 /**
   * Parses an individual IRC command.
   *
   * @param {string} line IRC command string.
-  * @return {Message}
   */
 function parse(line, cb) {
-  logger.debug('parsing', line)
   let tags
   let prefix
   let command
@@ -46,6 +49,7 @@ function parse(line, cb) {
   if (colon !== -1) {
     let append = line.slice(colon + 2)
     line = line.slice(0, colon)
+    logger.fatal("WHAT", { line, append, colon })
     params = line.split(/ +/g).concat([append])
   } else {
     params = line.split(/ +/g)
@@ -66,7 +70,7 @@ function parse(line, cb) {
  */
 class User extends Duplex {
   /**
-   * @param {stream.Duplex} sock Duplex Stream to read & write commands from & to.
+   * @param {import('stream').Duplex} sock Duplex Stream to read & write commands from & to.
    */
   constructor(sock, server) {
     super({
@@ -77,7 +81,9 @@ class User extends Duplex {
     this.server = server;
     /**@type {import('jose').JWTPayload} */
     this.auth = undefined;
-
+    /**
+     * @type {import('http').IncomingMessage}
+     */
 
 
     this.idleTime = 0;
@@ -117,9 +123,15 @@ class User extends Duplex {
       const message = new Message(null, 'QUIT', []);
       this.onReceive(message);
     });
+    logger.trace("Sock?", sock);
     if (!sock) return;
+    logger.trace("Handler setup..");
+    /**
+     * @type {import('http').incomi}
+     */
+    this.req = sock._req;
     sock.on('data', line => {
-      // logger.debug('got:', '' + d);
+      logger.debug('got:', '' + line);
       parse(('' + line).replace(/(\r\n)/gi, ''), (err, result) => {
         if (err) return this.emit('error', err);
         this.onReceive(result);
@@ -139,21 +151,24 @@ class User extends Duplex {
     sock.on('end', e => {
       this.emit('end', e);
     });
+    // sock.on('close', () => this.emit('close'));
+    // sock.on('pause', () => this.emit('pause'));
+    // sock.on('resume', () => this.emit('resume'));
+    // sock.on('readable', () => this.emit('readable'));
   }
   async setup() {
-    const flagModeChars = ['p', 's', 'i', 't', 'n', 'm', 'b']
-    const paramModeChars = ['l', 'k']
-    const listModeChars = ['o', 'v']
-    this.modes = await Modes.mk({ flagModeChars, paramModeChars, listModeChars })
+    this.modes = await Modes.mk({})
+
     this.initialized = true;
+    logger.trace("Setup complete");
   }
   async onReceive(message) {
     debug('receive', message + '')
     message.user = this
     message.prefix = this.mask()
-    // await this.server.saveToChatLog(message);
 
-    this.push(message)
+    this.push(message);
+    if (this.cap.list.includes('echo-message')) this.send(message);
   }
   sync() {
     this.principal && Object.entries(this).forEach(([key, value]) => {
@@ -205,13 +220,18 @@ class User extends Duplex {
    * @returns {Promise<Boolean>}
    */
   async send(message) {
+    // logger.trace("SEND ARGS", message);
+
+    /**
+     * @todo probably remove soon
+     */
     if (message.batch instanceof Array) {
       if (this.cap.list.includes('batch')) {
 
         logger.debug("BATCH SEND", message);
         return await async.series(message.batch.map(m => async.asyncify(() => {
           const msg = m instanceof Array ? new Message(...m) : m;
-          msg.ephemeral = true;
+          // msg.ephemeral = true;
           return this.send(msg);
         })));
       } else {
@@ -224,34 +244,45 @@ class User extends Duplex {
         })
           .filter(m => m.command.toLowerCase() !== 'batch')
           .map(m => async.asyncify(() => {
-            m.ephemeral = true;
+            // m.ephemeral = true;
             return this.send(m);
           })))).every(Boolean);
       }
     }
 
+
     if (!(message instanceof Message)) {
       message = new Message(...arguments)
     } else if (message.requirements.length && !message.requirements.every(this.cap.list.includes)) return;
+    logger.trace("SENDING", message.toString());
+
+
+    logger.trace("Source", new Error().stack)
+    if (message.command.toLowerCase() === 'batch' && !this.cap.list.includes('batch')) {
+      return;
+    }
     if (this.cap.list.includes('server-time') && !message.tags.time) {
       if (!message.tags) message.tags = {};
-      message.tags['time'] = new Date().toISOString();
+      if (!message.tags.time) message.tags['time'] = new Date().toISOString();
     }
+    if (!message.prefix && message.user) message.prefix = message.user.mask();
+
     if (this.cap.list.includes('account-tag')) {
-      if (message.user) {
-        logger.debug("Setting account tag", message.user.principal);
-        if (message?.user?.principal?.uid) message.tags["account"] = message.user.principal.uid;
+      if (message.user && !message.tags.account) {
+        if (message?.user?.principal?.uid) {
+          logger.debug("Setting account tag", message.user.principal.uid);
+
+          message.tags["account"] = message.user.principal.uid;
+        }
       }
     }
     if (message.command === 'BATCH') {
       delete message.tags.batch;
     }
-    logger.debug('da message', message);
-    logger.debug('send', message + '')
+
     await this.server.saveToChatLog(message);
     const lastParam = message.parameters[message.parameters.length - 1];
     if (lastParam && lastParam.indexOf(' ') !== -1 && lastParam[0] !== ':') message.parameters[message.parameters.length - 1] = ':' + lastParam;
-    logger.sub('last-parararam').debug({ lastParam });
     return this.socket ? new Promise((resolve, reject) => {
       function done() {
         logger.info("ENDING WRITE", ...arguments);

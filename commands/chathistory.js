@@ -7,15 +7,13 @@ const {
   ERR_NEEDMOREPARAMS,
 } = require('../replies');
 const Message = require('../message');
-function getMessages({ messages }) {
-  return messages.flatMap(m => {
-    if (m.batch) return m.batch.length ? m.batch.map(m => new Message(m.prefix, m.command, m.parameters, { ...m.tags, account: m.user })) : [];
+const symbolify = require('../features/symbolify');
+const escapeLib = import('escape-string-regexp');
+/**
+ * @type {const & import('escape-string-regexp')["default"]}
+ */
+let escape;
 
-    const r = new Message(m.prefix, m.command, m.parameters, { ...m.tags, account: m.user });
-
-    return r;
-  })
-}
 /**
  * Command: chathistory
  * Parameters: subcommand target timestamp|msgid [timestamp|msgid] limit
@@ -30,6 +28,7 @@ function getMessages({ messages }) {
  */
 
 module.exports = async function chathistory({ user, server, parameters }) {
+  if (!escape) escape = (await escapeLib).default;
   try {
 
 
@@ -45,37 +44,30 @@ module.exports = async function chathistory({ user, server, parameters }) {
       if (t === '*') return false;
       let [type, value] = t.split('=');
       if (type === 'msgid') {
-        let chatlog = server.chatlog;
-        let msg = chatlog.messages.find(m => m.tags.msgid === value);
-        if (!msg)
-          chatlog = await ChatLog.findOne({
-            messages: {
-              tags: {
-                msgid: value
-              }
-            }
-          });
-        if (chatlog) {
-          if (!msg) msg = chatlog.messages.find(m => m.tags.msgid === value);
-          if (!msg) return new Date();
-          value = new Date(msg.tags.time);
-        } else return new Date();
+
+        chatlog = await ChatLog.findOne({
+          where: {
+            "tags.msgId": value
+          }
+        });
+        value = new Date(msg?.tags?.time || Date.now());
       }
       return new Date(value);
     }))
     if (parameters.length > 4) {
       timestampOrMsgIdEnd = timestamps[1];
     }
-    const timestampOrMsgId = timestampOrMsgIdBegin = timestamps[0];
-    const limit = Math.min(timestampsOrMsgIds.pop(), server.maxScrollbackSize);
 
     const v = timestamps[0];
-    let criteria = {}, predicate = () => false, sort = { timestamp: -1 };
+    let criteria = {
+
+
+
+    }, sort = ['timestamp', 'ASC'];
     switch (subcommand) {
       case 'BEFORE':
         if (v) {
           criteria = { timestamp: { $lt: v } };
-          predicate = m => new Date(m.tags.time).getTime() < v.getTime();
         }
         break;
       case 'AROUND':
@@ -83,21 +75,16 @@ module.exports = async function chathistory({ user, server, parameters }) {
         if (v) {
 
           criteria = { timestamp: { $gt: v } };
-          predicate = m => new Date(m.tags.time).getTime() > v.getTime()
-          sort = { timestamp: 1 };
+          sort = ['timestamp', 'ASC']
         }
         break;
       case 'LATEST':
         if (v) criteria = { timestamp: { $gt: v } }
-        predicate = m => new Date(m.tags.time).getTime() > v.getTime();
-        sort = { timestamp: -1 }
+        // sort = { timestamp: -1 }
         break;
       case 'BETWEEN':
         criteria = { timestamp: { $gt: timestamps[0], $lt: timestamps[1] } };
-        predicate = m => {
-          const time = new Date(m.tags.time).getTime();
-          return time > timestamps[0].getTime() && time < timestamps[1].getTime();
-        }
+
         break;
       case 'TARGETS':
 
@@ -105,83 +92,71 @@ module.exports = async function chathistory({ user, server, parameters }) {
           batch: [batchStartCmd, batchEndCmd]
         });
     }
-    const originalPredicate = predicate;
     if (['#', '&'].indexOf(target.charAt(0)) === -1) {
 
       logger.trace(user.mask());
-
-      predicate = m => {
-        logger.trace(m.prefix.split('!').shift(), 'vs', user.nickname);
-        logger.trace(m.prefix.split('!').shift(), 'vs', target);
-        logger.trace(m.target, 'vs', user.nickname, 'or', target)
-        logger.debug(m);
-        const fromThem = (m.target === user.nickname && m.prefix.split('!').shift() === target);
-        const fromMe = (m.target === target && m.prefix.split('!').shift() === user.nickname);
-        logger.info({ fromMe, fromThem })
-        const result = (fromThem || fromMe);
-        return originalPredicate(m) && result;
+      criteria = {
+        ...criteria,
+        $or: [
+          {
+            target: user.nickname,
+            prefix: target
+          },
+          {
+            target: user.nickname,
+            prefix: { $like: `${target}!%@%`}
+          },
+          {
+            target,
+            prefix: user.mask()
+          }
+        ]
       }
     } else {
-      predicate = m => {
-        const result = m.target === target;
-        logger.debug("Matches channel???", m.target, target, result);
-        const o_result = originalPredicate(m);
-        logger.debug("Matches originalPredicate?", '' + originalPredicate, o_result);
-        logger.debug("times: m.tags.time:", m.tags.time, "timestamps:", timestamps);
-        return o_result && result;
-      }
+      criteria.target = target;
     }
     logger.debug("Chathistory criteria:", criteria);
-    logger.debug("Chathistory query:", '' + predicate);
-    /**
-     * 
-     * @param {import('../message')} m 
-     * @param {*} whitelist 
-     * @returns 
-     */
-    const filter = (m, whitelist = ["PRIVMSG", "NOTICE", "TAGMSG", "MODE", "BATCH"]) => {
-      const ret = predicate(m)
-        && whitelist.indexOf(m.command.toUpperCase()) !== -1;
-      logger.debug(`Does`, { msg: '' + m }, 'match?', ret);
-      logger.debug('predicate:', '' + predicate);
-      logger.debug('whitelist:', whitelist, 'command:', m.command.toUpperCase());
-      return ret;
-    }
-    const msgs = getMessages(server.chatlog);
-    const messages = msgs.filter(m => filter(m));
-    logger.debug("inital messagessssss..", msgs.map(m => {
-      m._target = m.target;
-      return m;
-    }));
-    logger.debug("filtered?", messages);
-    let query = ChatLog.find(criteria);
-    if (sort) query = query.sort(sort);
+    logger.debug("Sort:", sort);
+    let messages = await ChatLog.findAll({
+      where: symbolify({
+        ...criteria, command: {
+          $in: ['PRIVMSG', 'NOTICE', 'BATCH'].concat(user.cap.list.includes('draft/event-playback')
+            ? ['TAGMSG', 'JOIN', 'PART', 'QUIT', 'MODE', 'TOPIC', 'NICK']
+            : []
+          )
+        }
+      }), order: [sort]
+    })
+
     // query.limit(Math.max(Math.round/(limit / server.chatBatchSize), 1));
     // const matchingLogs = await query;
-    const cursor = query.cursor();
-    let current;
-    do {
-      current = await cursor.next();
-      if (current) {
-        const hist = getMessages(current)
-          .filter(
-            m => filter(m)
-          );
-        hist.length && logger.debug("History", hist);
-        messages.push(
-          ...hist
-        );
-      }
-    } while (current && messages.length <= limit)
-    await cursor.close();
+
+    // const cursor = query.cursor();
+    // let current;
+    // do {
+    //   current = await cursor.next();
+    //   if (current) {
+    //     const hist = getMessages(current)
+    //       .filter(
+    //         m => filter(m)
+    //       );
+    //     hist.length && logger.debug("History", hist);
+    //     messages.push(
+    //       ...hist
+    //     );
+    //   }
+    // } while (current && messages.length <= limit)
+    // await cursor.close();
     const batch = messages.map(m => {
       m.tags = m.tags || {};
       m.tags.batch = m.tags.batch || batchId;
-      return m;
+      return new Message(m.prefix, m.command, m.parameters, m.tags);
     })
     batch.unshift(batchStartCmd);
     batch.push(batchEndCmd);
-    if (!batch.length) return;
+    batch.forEach(b => {
+      b.ephemeral = true;
+    })
     user.send({
       batch,
     });

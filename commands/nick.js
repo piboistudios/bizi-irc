@@ -1,4 +1,5 @@
 const escapeLib = import('escape-string-regexp');
+const symbolify = require('../features/symbolify');
 const { mkLogger } = require('../logger');
 const Message = require('../message');
 const logger = mkLogger('ircs:commands:nick');
@@ -28,15 +29,20 @@ module.exports = async function nick({ user, server, tags, parameters: [nickname
   const regex = new RegExp('^' + escape(lnick) + '$', 'i');
   try {
 
-    const existingUser = await User.findOne({ _id: { $not: { $eq: user?.principal?._id } }, nickname: regex });
-    if (existingUser) {
+    const existingUser = await server.findUser(nickname);
+    if (existingUser && existingUser.principal && user.principal && existingUser.principal.uid !== user.principal.uid) {
       return user.send(server, ERR_NICKNAMEINUSE,
         [user.nickname, nickname, ':Nickname is already in use'])
     }
-    user.nickname = nickname;
+
     const msg = new Message(user, 'NICK', [nickname], tags);
     user.send(msg)
     user.channels.forEach(chan => chan.broadcast(msg));
+    user.nickname = nickname;
+    if (user.principal) {
+      user.principal.nickname = nickname;
+      await user.principal.save();
+    }
   } catch (e) {
     logger.fatal(e);
   }

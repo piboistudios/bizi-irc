@@ -7,7 +7,7 @@ const logger = require('../../logger').mkLogger('ircs:commands:cap:ls')
  */
 module.exports = async function ls(user, server) {
     logger.info("Begin CAP LIST");
-    const capString = server.capList().join(' ');
+    const capString = user.cap.list.join(' ');
     function sendCapString(capString) {
         let payload = capString;
         let remaining = '';

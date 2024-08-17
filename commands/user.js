@@ -1,7 +1,8 @@
 const { debuglog } = require('util');
 const pkg = require('../package.json')
 const {
-  ERR_NEEDMOREPARAMS
+  ERR_NEEDMOREPARAMS,
+  ERR_ALREADYREGISTERED
 } = require('../replies');
 
 const debug = debuglog('ircs:commands:user')
@@ -18,7 +19,9 @@ const debug = debuglog('ircs:commands:user')
  * @returns 
  */
 function USER({ user, server, parameters }) {
-
+  if (user.username) {
+    return user.send(server, ERR_ALREADYREGISTERED, [':You may not register']);
+  }
   if (parameters.length !== 4) {
     return user.send(server, ERR_NEEDMOREPARAMS, ['USER', ':Not enough parameters']);
   }

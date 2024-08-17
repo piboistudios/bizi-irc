@@ -18,40 +18,25 @@ module.exports = async function batch(msg) {
   const { user, server, parameters: [idTag, type, ...batchParams] } = msg;
   const [op, ...rest] = idTag.split('');
   const id = rest.join('');
-  const existingBatch = server.batches[id];
-  const ready = existingBatch && existingBatch.ready;
-  logger.debug("BATCH", { ready, existingBatch });
-  if (!ready) {
+  let batch = server.batches[id];
+  // const ready = batch && batch.ready;
+  // logger.debug("BATCH", { ready, batch });
+  // if (!ready) {
 
-    if (op === '+') {
-      server.batches[id] = Object.assign(server.batches[id] || {}, { user, type, batchParams, ready: false });
-      if (!server.batches[id].commands) server.batches[id].commands = [];
-      server.batches[id].commands.unshift(msg);
-    } else if (op === '-') {
-      process.nextTick(async () => {
-
-        if (server.batches[id]) {
-          server.batches[id].commands.push(msg);
-          await server.finishBatch(id);
-          delete server.batches[id];
-        }
-      })
+  if (op === '+') {
+    batch = server.batches[id] = Object.assign(batch || {}, { user, type, batchParams, ready: false });
+    if (!server.batches[id].commands) server.batches[id].commands = [];
+    batch.commands.unshift(msg);
+  } else if (op === '-') {
+    const currentTime = msg.tags.time instanceof Date ? msg.tags.time : new Date(msg.tags.time);
+    msg.tags.time = new Date(currentTime.getTime() + 1).toISOString();
+    if (batch) {
+      batch.commands.push(msg);
+      await server.finishBatch(id);
     }
   }
-  else {
-    if (existingBatch.type === 'draft/multiline') {
-      const [target] = existingBatch.batchParams;
-      logger.debug("Target", { target });
-      const chan = await server.findChannel(target);
-      logger.debug("Channel found?", !!chan);
-      if (chan) {
-        await chan.broadcast(msg);
-      } else {
-        const user = await server.findUser(target);
-        if (user) {
-          await user.send(msg);
-        }
-      }
-    }
-  }
+
+  const [target] = batch.batchParams;
+  logger.debug("Target", { target });
+  return server.sendTo(target, msg);
 };
