@@ -20,6 +20,7 @@ async function who({ user, server, parameters: [channelName, whoxStr] }) {
   const [fields, token] = whoxStr ? whoxStr.slice(1).split(',') : new Array(2);
   if (channel) {
     channel.users.forEach((u) => {
+      if(!user.isPrivileged && !u.principal) return;
       let mode = 'H' + user.botFlag() + channel.findMode(user, u);
 
       let values = [
@@ -31,7 +32,7 @@ async function who({ user, server, parameters: [channelName, whoxStr] }) {
       if (whoxStr) {
         replyCode = RPL_WHOSPCRPL;
         values = [
-          token, channel.name, u.username, u.address,
+          token, channel.name, u.username, u.address || '255.255.255.255',
           u.hostname, u.servername, u.nickname,
           mode, '0', u.idleTime, u.username, 'n/a', ':' + u.realname
         ];

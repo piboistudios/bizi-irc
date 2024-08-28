@@ -12,7 +12,7 @@ const logger = mkLogger('user');
 const debug = logger.debug;
 
 // see: https://libera.chat/guides/usermodes
-const flagModeChars = 'DgGiIQRuwz'.split('');
+const flagModeChars = 'DgGiIQRuwZNoO'.split('');
 const paramModeChars = [];
 const listModeChars = [];
 
@@ -49,7 +49,6 @@ function parse(line, cb) {
   if (colon !== -1) {
     let append = line.slice(colon + 2)
     line = line.slice(0, colon)
-    logger.fatal("WHAT", { line, append, colon })
     params = line.split(/ +/g).concat([append])
   } else {
     params = line.split(/ +/g)
@@ -168,7 +167,6 @@ class User extends Duplex {
     message.prefix = this.mask()
 
     this.push(message);
-    if (this.cap.list.includes('echo-message')) this.send(message);
   }
   sync() {
     this.principal && Object.entries(this).forEach(([key, value]) => {
@@ -250,10 +248,13 @@ class User extends Duplex {
       }
     }
 
-
+    logger.trace('sending', {args: [...arguments] })
     if (!(message instanceof Message)) {
       message = new Message(...arguments)
-    } else if (message.requirements.length && !message.requirements.every(this.cap.list.includes)) return;
+    } else if (message.requirements.length && !message.requirements.every(v => this.cap.list.includes(v))) {
+      if (message.fallbackMsg) message = message.fallbackMsg;
+      else return;
+    } 
     logger.trace("SENDING", message.toString());
 
 
@@ -307,7 +308,57 @@ class User extends Duplex {
     // simple & temporary
     return minimatch(this.mask() || '', mask);
   }
-
+  get isLocalOp() {
+    return this.modes.has('O')
+  }
+  get isGlobalOp() {
+    return this.modes.has('o');
+  }
+  get isOp() {
+    return this.isLocalOp || this.isGlobalOp;
+  }
+  get isAdmin() {
+    return this.isNetAdmin || this.isServerAdmin;
+  }
+  get isServerAdmin() {
+    return this.modes.has('A');
+  }
+  get isNetAdmin() {
+    return this.modes.has('N')
+  }
+  get isInvisible() {
+    return this.modes.has('i');
+  }
+  get idleTimeDisabled() {
+    return this.modes.has('I');
+  }
+  get usingTls() {
+    return this.modes.has('Z');
+  }
+  get isDeaf() {
+    return this.modes.has('D');
+  }
+  get usesCallerId() {
+    return this.modes.has('g');
+  }
+  get usesSoftCallerId() {
+    return this.modes.has('G');
+  }
+  get hasForwardingDisabled() {
+    return this.modes.has('Q');
+  }
+  get ignoresUnidentified() {
+    return this.modes.has('R');
+  }
+  get seesSpam() {
+    return this.modes.has('u');
+  }
+  get seesWallops() {
+    return this.modes.has('w');
+  }
+  get isPrivileged() {
+    return this.isAdmin || this.isOp;
+  }
   /**
    * Gives this user's mask.
    *

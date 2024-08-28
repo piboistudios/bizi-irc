@@ -41,4 +41,5 @@ module.exports = {
   PING: require('./ping'),
   // Disconnects.
   QUIT: require('./quit'),
+  REDACT: require('./redact'),
 };

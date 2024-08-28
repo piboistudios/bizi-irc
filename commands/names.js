@@ -15,10 +15,11 @@ module.exports = async function names({ user, server, parameters: [channelName] 
   let channel = await server.findChannel(channelName)
   if (channel) {
     let names = channel.users.map((u) => {
+      if(!user.isPrivileged && !u.principal) return;
       let mode = channel.findMode(user, u);
       const un = user.cap.list.includes('userhost-in-names') ? u.mask() : u.nickname;
       return mode + un
-    })
+    }).filter(Boolean);
 
     const symbol = channel.isSecret ? '@' : channel.isPrivate ? '*' : '=';
     names.forEach(name => {

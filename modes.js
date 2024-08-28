@@ -2,7 +2,7 @@ const { Model, Sequelize } = require('sequelize');
 
 const logger = require('./logger').mkLogger('ircs:modes');
 
-
+const MODES = ['flagModes', 'paramModes', 'listModes'];
 class Modes extends Sequelize.Model {
 
   isFlagMode(mode) { return  this.flagModeChars.indexOf(mode) !== -1 }
@@ -14,6 +14,7 @@ class Modes extends Sequelize.Model {
    * @param {string[]} params 
    */
   add(mode, params = []) {
+    logger.trace("modes add", mode, params);
     if (this.isFlagMode(mode)) {
       this.flagModes[mode] = true;
       this.changed('flagModes', true);
@@ -31,6 +32,7 @@ class Modes extends Sequelize.Model {
    * @param {string[]} params 
    */
   unset(mode, params = []) {
+    logger.trace("modes unset", mode, params);
     if (this.isFlagMode(mode)) {
       delete this.flagModes[mode]
       this.changed('flagModes', true);

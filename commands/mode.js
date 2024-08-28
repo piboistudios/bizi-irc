@@ -40,7 +40,7 @@ module.exports = async function mode({ user, server, tags, parameters: [target, 
       modeIsCode = RPL_CHANNELMODEIS;
     }
   } else {
-    const u = await server.findUser(target);
+    const u = await server.findUser(target, true);
     if (!u) {
       return user.send(server, ERR_NOSUCHNICK, [user.nickname, target, ':No such nick']);
     } else {
@@ -68,19 +68,14 @@ module.exports = async function mode({ user, server, tags, parameters: [target, 
     [chars1, chars2] = [modes.slice(i2), modes.slice(i1, i2)];
   params = [...new Set(params)];
   logger.trace()
+  logger.trace("modes before?", dest.modes.toJSON());
+
   await Promise.all([!viewOnly && chars1, !viewOnly && chars2, viewOnly && modes].filter(Boolean).map(async modes => {
     logger.trace("Modes:", modes);
     const action = modes[0]
     const modeChars = defaultReply ? modes.slice(1).split('') : modes.split('');
-    if (isChannel && action) {
-      const channel = dest;
-      if (!channel.hasOp(user)) {
-        user.send(server, ERR_CHANOPRIVSNEEDED,
-          [user.nickname, channel.name, ':You\'re not channel operator'])
-        return
-      }
-    }
-    if (await server.validateMode(user, dest, modeChars, isChannel)) {
+
+    if ((await server.validateMode(user, { isChannel, target: dest }, action, modeChars))) {
       logger.debug("Mode chars:", modeChars);
       modeChars.forEach((mode) => {
         if (action === '+') {
@@ -97,7 +92,7 @@ module.exports = async function mode({ user, server, tags, parameters: [target, 
                 at: Date.now() / 1000
               })
             });
-            dest.changes('meta', true);
+            dest.modes.markUpdated();
           }
           if (isChannel && mode == 'I') {
             params.forEach(invited => {
@@ -106,7 +101,7 @@ module.exports = async function mode({ user, server, tags, parameters: [target, 
                 at: Date.now() / 1000
               })
             })
-            dest.changes('meta', true);
+            dest.modes.markUpdated();
           }
         } else if (action === '-') {
           dest.modes.unset(mode, params)
@@ -114,13 +109,13 @@ module.exports = async function mode({ user, server, tags, parameters: [target, 
             params.forEach(banned => {
               dest.meta.banned.delete(banned);
             });
-            dest.changes('meta', true);
+            dest.modes.markUpdated();
           }
           if (isChannel && mode == 'I') {
             params.forEach(invited => {
               dest.meta.invited.delete(invited);
             })
-            dest.changes('meta', true);
+            dest.modes.markUpdated();
           }
         } else if (isChannel) {
           if (mode === 'I') {
@@ -147,10 +142,13 @@ module.exports = async function mode({ user, server, tags, parameters: [target, 
         }
       })
 
+    } else {
+      logger.trace("Mode not valid:", { user: user.nickname, isChannel, dest: target, action, modeChars })
     }
   }));
   if (isChannel && !viewOnly) {
     await dest.modes.save();
+    logger.trace("modes after?", dest.modes.toJSON());
 
   }
   defaultReply && dest.send(user, 'MODE', [target, modes, ...params], tags)

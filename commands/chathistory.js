@@ -36,6 +36,12 @@ module.exports = async function chathistory({ user, server, parameters }) {
       return user.send(server, ERR_NEEDMOREPARAMS, ['chathistory', ':Not enough parameters']);
     }
     let [subcommand, target, ...timestampsOrMsgIds] = parameters;
+    if (server.chanTypes.includes(target.charAt(0))) {
+      const chan = await server.findChannel(target);
+      if (!chan.hasUser(user))
+        return user.send(server, "FAIL", ["CHATHISTORY", "INVALID_TARGET", ":The channel or conversation does not exist, or you are not authorized to view it."]);
+    }
+
     const batchId = randomUUID();
     const batchStartCmd = new Message(server, "BATCH", [`+${batchId}`, "chathistory", target]);
     const batchEndCmd = new Message(server, "BATCH", [`-${batchId}`]);
@@ -51,6 +57,8 @@ module.exports = async function chathistory({ user, server, parameters }) {
           }
         });
         value = new Date(msg?.tags?.time || Date.now());
+      } else if (type !== "timestamp") {
+        return user.send(server, "FAIL", ["CHATHISTORY", "INVALID_PARAMS", ":Invalid chathistory parameters. Please see: https://ircv3.net/specs/extensions/chathistory for the expected parameters."]);
       }
       return new Date(value);
     }))
@@ -63,7 +71,7 @@ module.exports = async function chathistory({ user, server, parameters }) {
 
 
 
-    }, sort = ['timestamp', 'ASC'];
+    }, sort = ['timestamp', 'DESC'];
     switch (subcommand) {
       case 'BEFORE':
         if (v) {
@@ -86,11 +94,8 @@ module.exports = async function chathistory({ user, server, parameters }) {
         criteria = { timestamp: { $gt: timestamps[0], $lt: timestamps[1] } };
 
         break;
-      case 'TARGETS':
-
-        return user.send({
-          batch: [batchStartCmd, batchEndCmd]
-        });
+      default:
+        return user.send(server, "FAIL", ["CHATHISTORY", "UNKNOWN_COMMAND", ":Invalid subcommand."]);
     }
     if (['#', '&'].indexOf(target.charAt(0)) === -1) {
 
@@ -104,7 +109,7 @@ module.exports = async function chathistory({ user, server, parameters }) {
           },
           {
             target: user.nickname,
-            prefix: { $like: `${target}!%@%`}
+            prefix: { $like: `${target}!%@%` }
           },
           {
             target,
@@ -125,7 +130,9 @@ module.exports = async function chathistory({ user, server, parameters }) {
             : []
           )
         }
-      }), order: [sort]
+      }), 
+      order: [sort],
+      limit: parameters.pop()
     })
 
     // query.limit(Math.max(Math.round/(limit / server.chatBatchSize), 1));

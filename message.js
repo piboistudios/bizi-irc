@@ -81,6 +81,18 @@ class Message {
     }
     // logger.debug("Created message:", { tags, prefix, command, parameters });
   }
+
+  require(...caplist) {
+    this.requirements.push(...caplist);    
+    return this;
+  }
+  fallback(msg) {
+    if (!(msg instanceof Message)) {
+      msg = new Message(...arguments);
+    }
+    this.fallbackMsg = msg;
+    return this;
+  }
   sendTo(target) {
     return this.server.sendTo(target, this);
   }
@@ -98,7 +110,7 @@ class Message {
     }
     let ret = (this.prefix ? `:${this.prefix} ` : '') +
       this.command +
-      (this.parameters.length ? ` ${this.parameters.join(' ')}` : '')
+      (this.parameters.length ? ` ${this.parameters.map((p,i) => i === (this.parameters.length-1 && p.includes(' ') ) ? ':' + p : p).join(' ')}` : '')
     if (tagStr.length) {
       ret = `${tagStr} ${ret}`;
     }

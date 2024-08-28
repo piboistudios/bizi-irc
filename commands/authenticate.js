@@ -1,8 +1,9 @@
 const {
-    RPL_SASLMECHS, RPL_LOGGEDIN, ERR_SASLFAIL, RPL_SASLSUCCESS
+    RPL_SASLMECHS, RPL_LOGGEDIN, RPL_LOGGEDOUT, ERR_NICKLOCKED, ERR_SASLTOOLONG, ERR_SASLALREADY, ERR_SASLABORTED, ERR_SASLFAIL, RPL_SASLSUCCESS
 } = require('../replies');
 const logger = require('../logger').mkLogger('ircs:commands:authenticate')
 const User = require('../models/user');
+const {faker} = require('@faker-js/faker');
 const Message = require('../message');
 const { Modes } = require('../modes');
 
@@ -20,7 +21,13 @@ module.exports = async function auth({ user, server, parameters: [dataStr] }) {
     // nickname = nickname.trim()
     dataStr = dataStr || '';
     logger.debug('AUTHENTICATE', dataStr);
-    async function saslFail(msg, localPrincipal) {
+    async function saslFail(code, msg, localPrincipal) {
+        cancel();
+        if (typeof code === 'string') {
+            localPrincipal = msg;
+            msg = code;
+            code = 904;
+        }
         if (localPrincipal) {
             localPrincipal.meta.loginAttempts ??= [];
             localPrincipal.meta.loginAttempts.push({
@@ -35,9 +42,10 @@ module.exports = async function auth({ user, server, parameters: [dataStr] }) {
             });
             if (localPrincipal.meta.loginAttempts.length >= 128) localPrincipal.meta.loginAttempts.shift();
         }
-        return user.send(server, ERR_SASLFAIL, [':' + msg]) && (localPrincipal?.save?.());
+        return user.send(server, code, [':' + msg]) && (localPrincipal?.save?.());
     }
     async function loginWithPrincipal(principal, checkPass, data) {
+        user.authenticated = true;
         logger.info("Logging in as...", principal);
         logger.debug({ principal, checkPass, data });
         let localPrincipal = await User.findByPk(principal.uid);
@@ -74,18 +82,18 @@ module.exports = async function auth({ user, server, parameters: [dataStr] }) {
                     hostname: user.hostname
                 }
             }
-        })
+        });
+        localPrincipal.changed('meta', true);
         await localPrincipal.save();
         // user.send(user, "NICK", [user.nickname]);
         // user.send(user, "ACCOUNT", [user.username]);
-        logger.debug("normalize", normalize);
         const dupes = server.users.filter(u => u.nickname && normalize(u.nickname) === user.nickname && u !== user);
         await Promise.all(dupes.map(async dupe => {
 
             dupe = await server.findUser(user.nickname, true);
             logger.trace("Dupe?", dupe);
             if (dupe !== user) {
-                dupe.onReceive(new Message(dupe, 'QUIT', [':signed in from another client.']));
+                dupe.onReceive(new Message(dupe, 'QUIT', [':switched connections.']));
             }
         }));
 
@@ -103,12 +111,21 @@ module.exports = async function auth({ user, server, parameters: [dataStr] }) {
     }
     if (!user.cap.list.includes('sasl')) {
         return saslFail(`SASL authentication failed`);
-
     }
-    if (!user.mechanism) {
+    function cancel() {
+        user.authenticated = false;
+        user.principal && delete user.principal;
+        user._authbuffer && delete user._authbuffer;
+        user._saslMechanism && delete user._saslMechanism;
+    }
+    if (dataStr === '*') {
+        cancel();
+        return saslFail(ERR_SASLABORTED, "SASL aborted");
+    }
+    if (!user._saslMechanism) {
         if (server.auth.mechanisms.indexOf(dataStr) === -1)
             return user.send(server, RPL_SASLMECHS, [`:${server.auth.mechanisms.join(',')} are available mechanisms`])
-        user.mechanism = dataStr;
+        user._saslMechanism = dataStr;
         return user.send(server, "AUTHENTICATE", ["+"]);
     } else if (dataStr === '+' || dataStr?.length < 400) {
         if (!user._authbuffer) user._authbuffer = '';
@@ -118,7 +135,7 @@ module.exports = async function auth({ user, server, parameters: [dataStr] }) {
         try {
 
 
-            switch (user.mechanism) {
+            switch (user._saslMechanism) {
                 case "OAUTHBEARER":
                     {
                         const str = Buffer.from(dataStr, 'base64').toString('utf8');
@@ -134,7 +151,6 @@ module.exports = async function auth({ user, server, parameters: [dataStr] }) {
                         // const authzId = authzIdKvp.split('=').pop();
                         /**@type {{ user: String, auth: String }} */
                         logger.debug("Data", data);
-
                         const principal = await server.authenticateAndFetchUser(data, user)
                         // const principal = await User.findOne({ _id: data.sub });
                         if (!principal) return saslFail("Unable to verify auth token.");
@@ -155,16 +171,42 @@ module.exports = async function auth({ user, server, parameters: [dataStr] }) {
                         await loginWithPrincipal(principal, false, {});
                         break;
                     }
+                case 'ANONYMOUS':
+                    {
+                        const trace = Buffer.from(dataStr, 'base64').toString();
+                        if(trace.length > 255) return saslFail(ERR_SASLTOOLONG, "trace can only be up to 255 characters");
+                        logger.trace("Received SASL ANONYMOUS login attempt", { trace });
+                        user.nickname = faker.word.noun(5)+(faker.number.int(9999).toString().padStart(4));
+                        user.send(user, "NICK", [user.nickname]);
+                        user.realname = [faker.word.adverb(), faker.word.adjective(), faker.word.noun()].join(' ');
+                        user.send(user, "SETNAME", [":" + user.realname]);
+                        user.authenticated = true;
+                        user.send(server, RPL_LOGGEDIN, [
+                            user.nickname,
+                            user,
+                            user.nickname,
+                            `:You are now logged in as ${user.username}`
+                        ]);
+                        user.send(server, RPL_SASLSUCCESS, [
+                            user.nickname,
+                            `:SASL authentication successful`
+                        ]);
+                        break;
+                    }
 
 
                 // case 'EXTERNAL':'
             }
         } catch (e) {
             logger.fatal("SASL Failure:", e);
-            delete user.mechanism;
+            delete user._saslMechanism;
             return saslFail("Unknown error");
         }
     } else {
+        if (dataStr.length > 400) {
+            cancel();
+            return saslFail(ERR_SASLTOOLONG, "SASL message too long")
+        }
         if (!user._authbuffer) user._authbuffer = '';
         user._authbuffer += dataStr;
     }

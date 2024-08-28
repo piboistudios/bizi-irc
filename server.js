@@ -1,5 +1,6 @@
 const net = require('net');
 const fs = require('fs');
+const replies = require('./replies');
 const { debuglog } = require('util');
 const each = require('each-async');
 const writer = require('flush-write-stream');
@@ -10,13 +11,14 @@ const commands = require('./commands');
 const pkg = require('./package.json');
 const { EOL } = require('os');
 const { mkLogger } = require('./logger');
-const logger = mkLogger('ircs:Server');
+let logger = mkLogger('ircs:Server');
 const debug = logger.debug;
 const crypto = require('crypto');
 const async = require('async');
 const ChatLog = require('./models/chatlog');
 const fmtRes = require('./features/fmt-res');
 const { Modes } = require('./modes');
+const SERVER_SET_MODES = 'zNoO';
 /**
  * Represents a single IRC server.
  */
@@ -80,6 +82,7 @@ class Server extends net.Server {
     this._middleware = [];
     this._defaultHandlers = [];
     this.hostname = options.hostname;
+    logger = logger.sub(this.hostname);
     this.maxScrollbackSize = 64;
     this.chatBatchSize = 64;
     this.chatSaveInterval = (1000 * 60) * 15;
@@ -101,7 +104,8 @@ class Server extends net.Server {
       mechanisms: [
         'PLAIN',
         'OAUTHBEARER',
-        'EXTERNAL'
+        'EXTERNAL',
+        'ANONYMOUS'
       ]
     }
     this.isupport = [
@@ -120,12 +124,13 @@ class Server extends net.Server {
       // 'batch',
       // 'invite-notify',
       'echo-message',
-      // 'draft/event-playback',
+      'draft/event-playback',
       'draft/chathistory',
       // 'tls',
       // 'cap-notify',
       'batch',
       'chathistory',
+      'draft/message-redaction',
       'server-time',
       'invite-notify',
       'chghost',
@@ -189,7 +194,7 @@ class Server extends net.Server {
 
     for (const command in commands) {
       const fn = commands[command];
-      this._defaultHandlers.push({ command, fn });
+      this._defaultHandlers.push({ command: command.toLowerCase(), fn });
     }
 
     if (options.messageHandler) {
@@ -254,8 +259,45 @@ class Server extends net.Server {
       }
     }
   }
+  /**
+   * 
+   * @param {import('./user')} user 
+   * @param { ({ isChannel: false , target: import('./user')})|({isChannel: true , target: import('./channel').Channel})} dest 
+   * @param {string} action 
+   * @param {string} modeChars 
+   * @returns 
+   */
+  async validateMode(user, dest, action, modeChars, isChannel) {
+    if (!action) return true;
+    logger.trace('dest...', dest);
+    if (dest?.isChannel) {
+      const channel = dest.target;
+      if (!channel.hasOp(user)) {
+        logger.trace('so user should get a message...');
+        user.send(server, replies.ERR_CHANOPRIVSNEEDED,
+          [user.nickname, channel.name, ':You\'re not channel operator'])
+        return false;
+      } else {
+        logger.trace('so mode is valid...');
+      }
 
-  async validateMode(user, dest, modeChars, isChannel) {
+    } else if (dest) {
+      if (!user.principal) return false;
+      const target = dest.target;
+      if (target !== user) {
+        if (!user.isPrivileged) {
+          user.send(server, replies.ERR_NOPRIVILEGES, [user.nickname, ":Permission Denied- You're not an IRC operator"])
+          return false;
+        }
+        if (modeChars.split('').some(c => SERVER_SET_MODES.indexOf(c) !== -1)) {
+          if (!user.isAdmin) {
+            user.send(server, replies.ERR_NOPRIVILEGES, [user.nickname, ":Permission Denied- You're not an IRC operator"])
+            return false;
+          }
+        }
+      }
+    }
+    logger.trace("its a valid mode..");
     return true;
   }
   async finishBatch(id) {
@@ -264,54 +306,18 @@ class Server extends net.Server {
     const { user, commands, batchParams } = this.batches[id];
     /**@todo validate commands, send errors to user */
     logger.debug("Batch commands:", commands.length);
-    // const message = {
-    //   batch: commands.map(m => ({
-    //     prefix: Boolean(m.prefix) ? m.prefix : undefined,
-    //     command: m.command,
-    //     parameters: m.parameters,
-    //     tags: m.tags,
-    //   })),
-    // }
-    // this.chatlog.messages.push(message);
-    // try {
 
-    //   if (this.chatlog.messages.length >= this.chatBatchSize) {
-    //     this.chatlog = await this.mkChatLog();
-    //   }
-    // } catch (e) {
-    //   logger.error("Unable to save chat logs:", e);
-    // }
     this.batches[id].ready = true;
-    // const [target] = batchParams;
 
-    // const chan = await this.findChannel(target);
-    // const targetUser = !chan ? await this.findUser(target) : null;
     await async.series(commands.slice(1, -1).map(command => async.asyncify(async () => {
       logger.sub('BATCH').debug(id, "executing", command);
       await this.execute(command);
-      // logger.debug("Channel found?", !!chan);
-      // if (chan) {
-      //   return chan.broadcast(command);
-      // } else {
-      //   if (targetUser) {
-      //     return targetUser.send(command);
-      //   }
-      // }
+
     })))
 
     delete this.batches[id];
   }
-  // async mkChatLog() {
-  //   if (this.chatlog) await this.chatlog.save();
-  //   if (this.chatLogInterval) clearInterval(this.chatLogInterval);
-  //   this.chatLogInterval = setInterval(async () => {
-  //     if (!this?.chatlog?.messages?.length) return;
-  //     await this.chatlog.save();
-  //     this.chatlog = await this.mkChatLog();
-  //   }, this.chatSaveInterval);
 
-  //   return new ChatLog();
-  // }
   /**
    * 
    * @param {*} m 
@@ -337,10 +343,7 @@ class Server extends net.Server {
         logger.debug("chat batch size:", this.chatBatchSize);
 
         return message.save();
-        // this.chatlog.messages.push(message);
-        // if (this.chatlog.messages.length >= this.chatBatchSize) {
-        //   this.chatlog = await this.mkChatLog();
-        // }
+
       }
       else logger.sub('saveToChatLog').warn("Ignoring message:", m, "EPHEMERAL?", m.ephemeral, "BATCH?", !m?.tags?.batch);
     } catch (e) {
@@ -355,11 +358,18 @@ class Server extends net.Server {
    * @param {string} hostname 
    */
   chghost(user, hostname) {
-    const oldMask = user.mask();
+    // const oldMask = user.mask();
     user.hostname = hostname;
-    const msg = new Message(oldMask, 'CHGHOST', [user.username, user.hostname], ['chghost']);
+    const msg = new Message(this, 'CHGHOST', [user.username, user.hostname], ['chghost']);
     user.send(msg);
     user.channels.forEach(c => c.broadcast(msg));
+  }
+  /**
+   * 
+   * @param {import('./user')} user 
+   */
+  sendSignUpNote(user, command) {
+    return user.send(this, "NOTE", [command.toUpperCase(), "NEED_REGISTRATION", ":You can sign up at https://lou.network/auth/sign-up "]);
   }
   /**
    * 
@@ -373,7 +383,8 @@ class Server extends net.Server {
 
     user.send(this, '005', [user.nickname, ...this.isupport, ':are supported by this server']);
     user.send(this, 'MODE', [user.nickname, '+w']);
-    this.chghost(user, this.hostname);
+    if (user.principal) // cloak authenticated user ips
+      this.chghost(user, this.hostname);
     if (this.motd) {
       const send = (line) => {
 
@@ -408,8 +419,8 @@ class Server extends net.Server {
     nickname = normalize(nickname)
     const memUser = this.users.find(user => user.nickname && normalize(user.nickname) === nickname);
     if (memUser) return memUser;
-    else if(online) return null;
-    const principal = await require('./models/user').findOne({ nickname: nickname });
+    else if (online) return null;
+    const principal = await require('./models/user').findOne({ where: { nickname: nickname } });
     if (!principal) return null;
     const user = new User(null, this);
     user.nickname = nickname;
@@ -422,7 +433,7 @@ class Server extends net.Server {
    *
    * @param {string} channelName Channel name.
    *
-   * @return {import('./channel').Channel} Relevant Channel object if found, `undefined` if not found.
+   * @return {Promise<import('./channel').Channel>} Relevant Channel object if found, `undefined` if not found.
    */
   async findChannel(channelName) {
     const memChannel = this.channels.get(normalize(channelName));
@@ -517,6 +528,8 @@ class Server extends net.Server {
   }
 
   use(command, fn) {
+    command = command.toLowerCase();
+    logger.trace("Using:", '' + fn, '\nfor:', command);
     if (!fn) {
       [command, fn] = ['', command]
     }
@@ -548,11 +561,12 @@ class Server extends net.Server {
     let nextCalled = false;
     return async.detectSeries(this.middleware, (mw, next) => {
       logger.trace(mw);
-      if (mw.command === '' || mw.command.toLowerCase() === message.command.toLocaleLowerCase()) {
+      if (mw.command === '' || mw.command === message.command.toLowerCase()) {
         debug('executing', mw.command, message.parameters)
         return Promise.resolve()
           .then(() => mw.fn(message, locals, (e) => {
             nextCalled = true;
+            logger.trace('next.....');
             next(e, true);
           })) // promisify in case its not async
           .then(() => {
@@ -568,7 +582,7 @@ class Server extends net.Server {
       } else next(null, false);
     })
       .catch(e => {
-        message.user && message.user.send(this, "FAILURE", [message.command, '' + e]);
+        message.user && e && message.user.send(this, "FAIL", [message.command, 'ERROR', '"' + e]);
       })
   }
 

@@ -27,7 +27,7 @@ function list({ user, server, parameters: [channels] }) {
 
     let response = [user.nickname, channel.name, channel.users.length, channel.topic || '']
     if (channel.isPrivate && !channel.hasUser(user)) {
-      response = [user.nickname, 'Prv', channel.users.length, '']
+      response = [user.nickname, '.<private>', channel.users.length, '']
     }
     user.send(server, RPL_LIST, response)
   })

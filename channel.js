@@ -8,7 +8,7 @@ const { db } = require('./state');
 const logger = mkLogger("modes");
 // see: https://libera.chat/guides/channelmodes
 const flagModeChars = 'psitnmcCFgQrRTu'.split('')
-const paramModeChars = 'lkfjk'.split('')
+const paramModeChars = 'lkfjkH'.split('')
 const listModeChars = 'ovhaqeIbq'.split('')
 // /**
 //  * @type {import('sequelize').Model}
@@ -42,6 +42,10 @@ const listModeChars = 'ovhaqeIbq'.split('')
 
 /**
  * Represents an IRC Channel on the server.
+ * @class
+ * @constructor
+ * @public
+ * @property {import('./modes').Modes} modes
  */
 class Channel extends Sequelize.Model {
   /**
@@ -112,7 +116,9 @@ class Channel extends Sequelize.Model {
       user.channels.splice(i, 1)
     }
   }
-
+  get onlineUsers() {
+    return this.users.filter(u => u.socket);
+  }
   /**
    * Checks if a user is in this channel.
    *
@@ -121,7 +127,7 @@ class Channel extends Sequelize.Model {
    * @return boolean Whether the user is here.
    */
   hasUser(user) {
-    return this.users.indexOf(user) !== -1
+    return this.onlineUsers.indexOf(user) !== -1
   }
 
 
@@ -154,15 +160,14 @@ class Channel extends Sequelize.Model {
     if (!(message instanceof Message)) {
       message = new Message(...arguments)
     }
-    let sent = false;
+    // let sent = false;
     await Promise.all(this.users.map(async (u) => {
       if (self || !u.matchesMask(message.prefix)) {
-        sent = true;
         return u.send(message);
       }
       return;
     }));
-    if (!sent) await this.server.saveToChatLog(message);
+    this.users.length && await this.server.saveToChatLog(message);
   }
   /**
    * 
@@ -315,4 +320,7 @@ class Channel extends Sequelize.Model {
 // Modes.Modes.belongsTo(Channel, { targetKey: "modes", foreignKey: "id" })
 // module.exports = model;
 module.exports = require('./models/channel')(Channel);
+/**
+ * @type {Channel & {modes: import('./modes').Modes}}
+ */
 module.exports.Channel = Channel;

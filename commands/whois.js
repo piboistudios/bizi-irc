@@ -17,8 +17,10 @@ const logger = mkLogger('whois');
  * @returns 
  */
 async function whois({ user, server, parameters: [nickmask] }) {
-  const target = await server.findUser(nickmask)
+  let target = await server.findUser(nickmask)
+  if (!target.principal && !user.isPrivileged) target = null;
   if (target) {
+    
     user.send(server, RPL_WHOISUSER, [user.nickname, target.username, target.hostname, '*', `:${user.realname}`])
     user.send(server, RPL_WHOISSERVER, [user.nickname, target.username, target.servername, target.servername])
     logger.trace("Target:", target);

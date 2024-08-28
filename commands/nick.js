@@ -26,13 +26,12 @@ module.exports = async function nick({ user, server, tags, parameters: [nickname
   // }
 
   const lnick = nickname.toLowerCase()
-  const regex = new RegExp('^' + escape(lnick) + '$', 'i');
   try {
 
     const existingUser = await server.findUser(nickname);
     if (existingUser && existingUser.principal && user.principal && existingUser.principal.uid !== user.principal.uid) {
       return user.send(server, ERR_NICKNAMEINUSE,
-        [user.nickname, nickname, ':Nickname is already in use'])
+        [user.nickname, nickname, ':Nickname is already in use']);
     }
 
     const msg = new Message(user, 'NICK', [nickname], tags);
