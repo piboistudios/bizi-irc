@@ -42,7 +42,7 @@ const kick = async ({ server, user, parameters, tags }) => {
   }
 
   channel.send(user, 'KICK', parameters, tags);
-  channel.part(target)
+  return channel.part(target)
 };
 
 module.exports = kick;

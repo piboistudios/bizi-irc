@@ -12,9 +12,7 @@ const logger = mkLogger('user');
 const debug = logger.debug;
 
 // see: https://libera.chat/guides/usermodes
-const flagModeChars = 'DgGiIQRuwZNoO'.split('');
-const paramModeChars = [];
-const listModeChars = [];
+
 
 /**
   * Parses an individual IRC command.
@@ -282,6 +280,7 @@ class User extends Duplex {
     }
 
     await this.server.saveToChatLog(message);
+    message.ephemeral = true;
     const lastParam = message.parameters[message.parameters.length - 1];
     if (lastParam && lastParam.indexOf(' ') !== -1 && lastParam[0] !== ':') message.parameters[message.parameters.length - 1] = ':' + lastParam;
     return this.socket ? new Promise((resolve, reject) => {

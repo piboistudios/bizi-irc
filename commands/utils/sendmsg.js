@@ -59,7 +59,8 @@ module.exports = async function sendmsg(arg0) {
 
     }
     queue ??= (_, next) => next();
-    chanSendAuthz ??= () => [false];
+    chanSendAuthz ??= () => [true];
+    userSendAuthz ??= () => [true];
     logger.trace("cap:", user.cap.list);
 
     let target
@@ -83,7 +84,7 @@ module.exports = async function sendmsg(arg0) {
             const cannotSendChan = [
                 target.modes.has('m') && !target.hasOp(user) && !target.hasVoice(user),
                 target.modes.has('n') && !target.hasUser(user),
-                ...(authz instanceof Array ? authz : [authz])
+                ...(authz instanceof Array ? authz : [authz]).map(r => !r)
             ].reduce((l, r) => l || r, false);
             if (cannotSendChan) {
                 let halt = true;
@@ -110,7 +111,7 @@ module.exports = async function sendmsg(arg0) {
         if (target) {
             logger.trace("user found:", target.nickname);
             const authz = await userSendAuthz({ user, server, target });
-            const cannotSendUser = (authz instanceof Array ? authz : [authz]).reduce((l, r) => l || r, false);
+            const cannotSendUser = (authz instanceof Array ? authz : [authz]).reduce((l, r) => l || !r, false);
             if (cannotSendUser) return;
             if (target.away) {
                 let halt = true;
@@ -131,7 +132,6 @@ module.exports = async function sendmsg(arg0) {
 
         if (msg.tags.label)
             forwarded.tags.label = msg.tags.label;
-        forwarded.ephemeral = true;
         user.send(forwarded);
     }
     logger.debug("target name:", targetName);

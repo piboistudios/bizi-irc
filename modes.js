@@ -3,26 +3,55 @@ const { Model, Sequelize } = require('sequelize');
 const logger = require('./logger').mkLogger('ircs:modes');
 
 const MODES = ['flagModes', 'paramModes', 'listModes'];
+const CHANNEL_MODE_CHARS = {
+  flagModeChars: 'psitnmcCFgQrRTuW'.split(''),
+  paramModeChars: 'lkfjkH'.split(''),
+  listModeChars: 'ovhaqeIbqx'.split(''),
+}
+const USER_MODE_CHARS = {
+  flagModeChars: 'DgGiIQRuwZNoO'.split(''),
+  paramModeChars: [],
+  listModeChars: [],
+}
 class Modes extends Sequelize.Model {
-
-  isFlagMode(mode) { return  this.flagModeChars.indexOf(mode) !== -1 }
-  isParamMode(mode) { return this.paramModeChars.indexOf(mode) !== -1 }
-  isListMode(mode) { return  this.listModeChars.indexOf(mode) !== -1 }
+  get flagModeChars() {
+    return (!this.isUser ? CHANNEL_MODE_CHARS : USER_MODE_CHARS).flagModeChars;
+  }
+  get paramModeChars() {
+    return (!this.isUser ? CHANNEL_MODE_CHARS : USER_MODE_CHARS).paramModeChars;
+  }
+  get listModeChars() {
+    return (!this.isUser ? CHANNEL_MODE_CHARS : USER_MODE_CHARS).listModeChars;
+  }
+  isFlagMode(mode) {
+    return this["flagModeChars"]
+      .indexOf(mode) !== -1
+  }
+  isParamMode(mode) {
+    return this["paramModeChars"]
+      .indexOf(mode) !== -1
+  }
+  isListMode(mode) {
+    return this["listModeChars"]
+      .indexOf(mode) !== -1
+  }
   /**
    * 
    * @param {string} mode 
    * @param {string[]} params 
    */
-  add(mode, params = []) {
+  add(mode, params = [], i = 0) {
     logger.trace("modes add", mode, params);
+    if (!(params instanceof Array)) params = [params];
+
     if (this.isFlagMode(mode)) {
       this.flagModes[mode] = true;
       this.changed('flagModes', true);
     } else if (this.isParamMode(mode)) {
-      this.paramModes[mode] = params[0]
+      this.paramModes[mode] = params[i]
       this.changed('paramModes', true);
     } else if (this.isListMode(mode)) {
-      this.listModes[mode] = (this.listModes[mode] || []).concat(params)
+      this.listModes[mode] = [...new Set((this.listModes[mode] || []).concat(params))];
       this.changed('listModes', true);
     }
   }
@@ -33,6 +62,8 @@ class Modes extends Sequelize.Model {
    */
   unset(mode, params = []) {
     logger.trace("modes unset", mode, params);
+    if (!(params instanceof Array)) params = [params];
+    
     if (this.isFlagMode(mode)) {
       delete this.flagModes[mode]
       this.changed('flagModes', true);
@@ -100,14 +131,9 @@ class Modes extends Sequelize.Model {
    * @returns {ReturnType<ReturnType<typeof import('./models/modes')>["Instance"]}
    */
   static async _mk(o = {}) {
-    let { flagModeChars, paramModeChars, listModeChars } = o;
-    flagModeChars ??= ['p', 's', 'i', 't', 'n', 'm', 'b']
-    paramModeChars ??= ['l', 'k']
-    listModeChars ??= ['o', 'v']
+
     const opts = {
-      flagModeChars: flagModeChars,
-      paramModeChars: paramModeChars,
-      listModeChars: listModeChars,
+
       flagModes: {},
       paramModes: {},
       listModes: {}

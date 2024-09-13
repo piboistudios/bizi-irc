@@ -8,6 +8,7 @@ const sendmsg = require('./utils/sendmsg');
  */
 module.exports = async msg => {
   return sendmsg({
+    msg,
     target: msg.parameters[0],
     unauthorized: () => {},
     forbidden: () => {},

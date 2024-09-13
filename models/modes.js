@@ -11,9 +11,7 @@ const Modes = clazz => h(
   /**
    * @type {const}
    * */({
-    flagModeChars: { type: { name: "JSON" } }/* [String] */,
-    paramModeChars: { type: { name: "JSON" } }/* [String] */,
-    listModeChars: { type: { name: "JSON" } }/* [String] */,
+    isUser: { type: { name: "BOOLEAN" }},
     flagModes: { type: { name: "JSON" } },/* {
           type: Map,
           of: Boolean

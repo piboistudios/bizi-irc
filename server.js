@@ -19,6 +19,7 @@ const ChatLog = require('./models/chatlog');
 const fmtRes = require('./features/fmt-res');
 const { Modes } = require('./modes');
 const SERVER_SET_MODES = 'zNoO';
+
 /**
  * Represents a single IRC server.
  */
@@ -108,6 +109,20 @@ class Server extends net.Server {
         'ANONYMOUS'
       ]
     }
+    this.PREFIXES = {
+      '~': 'q',
+      '@': 'o',
+      '%': 'h',
+      '>': 'x',
+      '+': 'v',
+      '-': 'a',
+    };
+    const prefixes = Object.entries(this.PREFIXES).reduce((result, kvp) => {
+      result[0] += kvp[1];
+      result[1] += kvp[0];
+      return result;
+    }, ['', '']);
+    const PREFIX = `(${prefixes[0]})${prefixes[1]}`
     this.isupport = [
       'UTF8ONLY',
       'WHOX',
@@ -115,7 +130,8 @@ class Server extends net.Server {
       'NAMELEN=32',
       'BOT=' + this.botFlag,
       'CHANMODES=l,k,o,v,b,I',
-      'CHANTYPES=' + this.chanTypes.join('')
+      'CHANTYPES=' + this.chanTypes.join(''),
+      'PREFIX='+PREFIX
     ];
     this.capabilities = [
       'multi-prefix',
@@ -126,6 +142,7 @@ class Server extends net.Server {
       'echo-message',
       'draft/event-playback',
       'draft/chathistory',
+      'draft/labeled-response',
       // 'tls',
       // 'cap-notify',
       'batch',
@@ -265,12 +282,28 @@ class Server extends net.Server {
    * @param { ({ isChannel: false , target: import('./user')})|({isChannel: true , target: import('./channel').Channel})} dest 
    * @param {string} action 
    * @param {string} modeChars 
+   * @param {string[]} params 
    * @returns 
    */
-  async validateMode(user, dest, action, modeChars, isChannel) {
+  async validateMode(user, dest, action, modeChars, params) {
+    const server = this;
     if (!action) return true;
     logger.trace('dest...', dest);
     if (dest?.isChannel) {
+      if (dest.target.hasConference
+        && modeChars[0] == 'x'
+        && modeChars.length === 1
+        && params.length === 1
+        && params[0] === user.nickname
+      ) {
+        logger.debug("User can set/unset x flag to join/unjoin call")
+        return true;
+      }
+      logger.debug('continuing validation...', {
+        conference: dest.target.hasConference,
+        modeChars,
+        params
+      })
       const channel = dest.target;
       if (!channel.hasOp(user)) {
         logger.trace('so user should get a message...');
@@ -368,8 +401,8 @@ class Server extends net.Server {
    * 
    * @param {import('./user')} user 
    */
-  sendSignUpNote(user, command) {
-    return user.send(this, "NOTE", [command.toUpperCase(), "NEED_REGISTRATION", ":You can sign up at https://lou.network/auth/sign-up "]);
+  sendSignUpNote(user, command, tags={}) {
+    return user.send(this, "NOTE", [command.toUpperCase(), "NEED_REGISTRATION", ":You can sign up at https://lou.network/auth/sign-up "], tags);
   }
   /**
    * 
@@ -446,7 +479,7 @@ class Server extends net.Server {
         const flagModeChars = ['p', 's', 'i', 't', 'n', 'm']
         const paramModeChars = ['l', 'k']
         const listModeChars = ['o', 'v', 'b', 'I', 'h']
-        modes = await Modes.mk({ flagModeChars, paramModeChars, listModeChars });
+        modes = await Modes.mk({ });
       }
       channel.modes = modes;
       this.channels.set(channelName, channel);

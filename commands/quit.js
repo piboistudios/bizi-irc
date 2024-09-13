@@ -1,6 +1,6 @@
-const { debuglog } = require('util');
+const { mkLogger } = require('../logger');
 
-const debug = debuglog('ircs:Command:QUIT');
+const logger = mkLogger('quit');
 /**
  * 
  * @param {{
@@ -10,17 +10,18 @@ const debug = debuglog('ircs:Command:QUIT');
  * }} param0 
  * @returns 
  */
-function QUIT({ user, server, parameters: [message] }) {
+async function QUIT({ user, server, parameters: [message] }) {
+  if (user.closed) return;
   message = message || user.nickname
-  debug('user quit', message);
+  logger.debug('user quit', message);
   const index = server.users.indexOf(user);
   if (index === -1) return new Error(`No such user ${user.nickname} from this server`);
   server.users.splice(index, 1);
   const userChannels = [...server.channels.values()].filter(c => c.users.find(u => u === user));
-  userChannels.forEach(channel => {
-    channel.part(user);
+  await Promise.all(userChannels.map(async channel => {
+    await channel.part(user);
     channel.send(user, 'PART', [channel.name, `:${message}`])
-  })
+  }))
   user.end();
 }
 

@@ -4,6 +4,7 @@ const logger = require('./logger').mkLogger('irc');
 // const { Sequelize } = require('sequelize');
 const path = require('path');
 const state = require('./state');
+const { Op } = require('sequelize');
 
 const authedCommands = [
     'JOIN',
@@ -43,7 +44,13 @@ async function main(opts) {
     const dir = path.join(__dirname, './models');
     const models = [User, ChatLog, Channel, Modes]
     logger.trace("models before crash or whatev", models);
-    await Promise.all(models.map(m => m.sync({ alter: true })))
+    process.env.SYNC && await Promise.all(models.map(m => m.sync({ alter: true })))
+    logger.trace('log:', await ChatLog.findOne({
+        where: {
+
+            'tags."+draft/conf-cmd"': null
+        }
+    }));
     // const sequelize = new Sequelize({
     //     dialect: 'sqlite',
     //     storage: process.env.DB_PATH || 'db.sqlite',
@@ -162,7 +169,7 @@ async function main(opts) {
     wss.on('connection',
         /**
          * 
-         * @param {*} cnx 
+         * @param {import('ws').WebSocket} cnx 
          * @param {import('http').IncomingMessage} req 
          */
         (cnx, req) => {
@@ -173,7 +180,6 @@ async function main(opts) {
 
             const write = duplex.write.bind(duplex);
             duplex.write = m => {
-                // ``z
                 cnx.send('' + m);
             }
             const user = server.addCnx(duplex);
@@ -184,7 +190,7 @@ async function main(opts) {
             duplex.on('end', () => {
                 logger.debug("DUPLEX END Removing cnx for", user);
                 server.removeCnx(user);
-
+                cnx.close();
             })
             cnx.on('close', () => {
                 wslogger.debug("WS CLOSE Removing cnx for", user);

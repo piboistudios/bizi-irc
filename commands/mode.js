@@ -24,7 +24,7 @@ module.exports = async function mode({ user, server, tags, parameters: [target, 
   if (modes && !user) return;
   const leadChar = target[0];
   /**
-   * @type {import('../user') | import('../channel')}
+   * @type {import('../user') | import('../channel').Channel}
    */
   let dest;
   let modeIsCode, isChannel = true;
@@ -49,15 +49,16 @@ module.exports = async function mode({ user, server, tags, parameters: [target, 
       isChannel = false;
     }
   }
-
+  logger.trace("modes?", modes);
   if (!modes) {
     // bare /MODE: return current modes
     const modeString = dest.modes.toString()
+    logger.trace("Sending mode string:", modeString);
     user.send(server, modeIsCode,
       [user.nickname, target, ...modeString.split(' ')])
     return
   }
-
+  
   const i1 = modes.indexOf('+');
   const i2 = modes.indexOf('-');
   let viewOnly = i1 === -1 && i2 === -1;
@@ -69,17 +70,25 @@ module.exports = async function mode({ user, server, tags, parameters: [target, 
   params = [...new Set(params)];
   logger.trace()
   logger.trace("modes before?", dest.modes.toJSON());
-
+  let modeValid = false;
+  let modesChanged = false;
+  const updated = () => {
+    modesChanged = true;
+  }
   await Promise.all([!viewOnly && chars1, !viewOnly && chars2, viewOnly && modes].filter(Boolean).map(async modes => {
     logger.trace("Modes:", modes);
     const action = modes[0]
     const modeChars = defaultReply ? modes.slice(1).split('') : modes.split('');
 
-    if ((await server.validateMode(user, { isChannel, target: dest }, action, modeChars))) {
+    if ((await server.validateMode(user, { isChannel, target: dest }, action, modeChars, params))) {
+      modeValid = true;
       logger.debug("Mode chars:", modeChars);
-      modeChars.forEach((mode) => {
+      modeChars.forEach((mode, i) => {
         if (action === '+') {
-          dest.modes.add(mode, params);
+          const paramAlreadySet = params.find(param => dest.modes.has(mode, param));
+          if (paramAlreadySet) return user.send(server, "FAIL", ['MODE', 'INVALID_MODE', `:${dest.name} already has param (${paramAlreadySet}) for mode (${mode}) set.`]);
+          updated();
+          dest.modes.add(mode, params, i);
           // if (isChannel && mode === 'b') {
           //   params.forEach(banned => {
           //     user.onReceive(new Message(user, 'KICK', [target, banned, ":banned"]))
@@ -92,7 +101,7 @@ module.exports = async function mode({ user, server, tags, parameters: [target, 
                 at: Date.now() / 1000
               })
             });
-            dest.modes.markUpdated();
+            // dest.modes.markUpdated();
           }
           if (isChannel && mode == 'I') {
             params.forEach(invited => {
@@ -101,21 +110,29 @@ module.exports = async function mode({ user, server, tags, parameters: [target, 
                 at: Date.now() / 1000
               })
             })
-            dest.modes.markUpdated();
+            // dest.modes.markUpdated();
           }
         } else if (action === '-') {
+          const paramAlreadyUnset = params.find(param => !dest.modes.has(mode,param));
+          if (paramAlreadyUnset) return user.send(server, "FAIL", ['MODE', 'INVALID_MODE', `:${dest.name} does not have (${paramAlreadyUnset}) set for mode (${mode}).`]);
+          updated();
           dest.modes.unset(mode, params)
+          if (isChannel && mode == 'W') {
+            dest.modes.listModes['x'] = [];
+            // dest.modes.markUpdated();
+
+          }
           if (isChannel && mode == 'b') {
             params.forEach(banned => {
               dest.meta.banned.delete(banned);
             });
-            dest.modes.markUpdated();
+            // dest.modes.markUpdated();
           }
           if (isChannel && mode == 'I') {
             params.forEach(invited => {
               dest.meta.invited.delete(invited);
             })
-            dest.modes.markUpdated();
+            // dest.modes.markUpdated();
           }
         } else if (isChannel) {
           if (mode === 'I') {
@@ -146,11 +163,11 @@ module.exports = async function mode({ user, server, tags, parameters: [target, 
       logger.trace("Mode not valid:", { user: user.nickname, isChannel, dest: target, action, modeChars })
     }
   }));
-  if (isChannel && !viewOnly) {
+  if (modesChanged) {
     await dest.modes.save();
     logger.trace("modes after?", dest.modes.toJSON());
 
   }
-  defaultReply && dest.send(user, 'MODE', [target, modes, ...params], tags)
+  modeValid && modesChanged && defaultReply && dest.send(user, 'MODE', [target, modes, ...params], tags)
 
 }

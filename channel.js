@@ -7,9 +7,7 @@ const { mkLogger } = require('./logger');
 const { db } = require('./state');
 const logger = mkLogger("modes");
 // see: https://libera.chat/guides/channelmodes
-const flagModeChars = 'psitnmcCFgQrRTu'.split('')
-const paramModeChars = 'lkfjkH'.split('')
-const listModeChars = 'ovhaqeIbq'.split('')
+
 // /**
 //  * @type {import('sequelize').Model}
 //  */
@@ -69,24 +67,23 @@ class Channel extends Sequelize.Model {
   }
   findMode(user, u) {
     let mode = '';
-    if (user.cap.list.includes('multi-prefix')) {
-      if (this.modes.has('q', u.nickname)) mode += '~';
-      if (this.hasOp(u)) mode += '@'
-      if (this.hasHalfOp(u)) mode += '%';
-      if (this.hasVoice(u)) mode += '+';
-    } else
-      if (this.modes.has('q', u.nickname)) mode += '~';
-      else if (this.hasOp(u)) mode += '@'
-      else if (this.hasHalfOp(u)) mode += '%'
-      else if (this.hasVoice(u)) mode += '+'
+    const multiprefix = user.cap.list.includes('multi-prefix');
+    for (let key in this.server.PREFIXES) {
+      const m = this.server.PREFIXES[key];
+      if (!m) continue;
+      if (this.modes.has(m, u.nickname)) {
+        mode += key;
+        if (!multiprefix) break;
+      }
+    }
     return mode;
   }
   /**
    * Joins a user into this channel.
    *
-   * @param {User} user Joining user.
+   * @param {import('./user')} user Joining user.
    */
-  join(user) {
+  async join(user) {
     if (this.hasUser(user)) {
       throw new Error(`User ${user.nickname} has already join this channel ${this.name}`);
     } else {
@@ -98,15 +95,23 @@ class Channel extends Sequelize.Model {
       this.addHalfOp(user);
       this.modes.add('q', user.nickname);
     }
+    if (this.modes.has('W')) {
+      user.send(this.server, "NOTICE", [user.nickname, ':A conference is ongoing.'], { "lou.network/conference-started": 1, '+draft/channel-context': this.name });
+    }
+    await require('./commands/names')({
+      user,
+      server: this.server,
+      parameters: [this]
+    })
     return this;
   }
 
   /**
    * Parts a user from this channel.
    *
-   * @param {User} user Parting user.
+   * @param {import('./user')} user Parting user.
    */
-  part(user) {
+  async part(user) {
     let i = this.users.indexOf(user)
     if (i !== -1) {
       this.users.splice(i, 1)
@@ -114,6 +119,13 @@ class Channel extends Sequelize.Model {
     i = user.channels.indexOf(this)
     if (i !== -1) {
       user.channels.splice(i, 1)
+    }
+    if (this.modes.has('W') && this.modes.has('x', user.nickname)) {
+      logger.debug("removing mode????", 'x', user.nickname)
+      this.modes.unset('x', user.nickname);
+      await this.modes.save();
+    } else {
+      logger.trace('or nah ofc no mode');
     }
   }
   get onlineUsers() {
@@ -259,6 +271,10 @@ class Channel extends Sequelize.Model {
     return this.modes.has('s')
   }
 
+  get hasConference() {
+    return this.modes.has('W')
+  }
+
   get isInviteOnly() {
     return this.modes.has('i')
   }
@@ -288,9 +304,6 @@ class Channel extends Sequelize.Model {
     opts.name = name
     opts.topic = null
     const modes = await Modes.mk({
-      flagModeChars,
-      paramModeChars,
-      listModeChars
     });
     opts._modes = modes.id;
 

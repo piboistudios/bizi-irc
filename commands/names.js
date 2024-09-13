@@ -11,8 +11,8 @@ const {
  * }} param0 
  * @returns 
  */
-module.exports = async function names({ user, server, parameters: [channelName] }) {
-  let channel = await server.findChannel(channelName)
+module.exports = async function names({ user, server, parameters: [channelNameOrChan] }) {
+  let channel = typeof channelNameOrChan === 'string' ? await server.findChannel(channelNameOrChan) : channelNameOrChan;
   if (channel) {
     let names = channel.users.map((u) => {
       if(!user.isPrivileged && !u.principal) return;

@@ -8,7 +8,14 @@ const {
 } = require('../replies');
 const Message = require('../message');
 const symbolify = require('../features/symbolify');
+/**
+ * @type {import('sequelize')["Op"]}
+ */
+const Op = require('sequelize').Op;
 const escapeLib = import('escape-string-regexp');
+const MSG_CMDS = ['PRIVMSG','NOTICE','BATCH']
+const VISIBLE_CMDS = MSG_CMDS.concat('JOIN PART QUIT MODE TOPIC NICK'.split(' '));
+const EVENT_CMDS = ['TAGMSG', 'JOIN', 'PART', 'QUIT', 'MODE', 'TOPIC', 'NICK', 'REDACT'];
 /**
  * @type {const & import('escape-string-regexp')["default"]}
  */
@@ -31,11 +38,15 @@ module.exports = async function chathistory({ user, server, parameters }) {
   if (!escape) escape = (await escapeLib).default;
   try {
 
-
+    function invalidParamsResponse() {
+      return user.send(server, "FAIL", ["CHATHISTORY", "INVALID_PARAMS", ":Invalid chathistory parameters. Please see: https://ircv3.net/specs/extensions/chathistory for the expected parameters."]);
+    }
     if (parameters.length < 1) {
       return user.send(server, ERR_NEEDMOREPARAMS, ['chathistory', ':Not enough parameters']);
     }
     let [subcommand, target, ...timestampsOrMsgIds] = parameters;
+    const limit = timestampsOrMsgIds.pop();
+    if (Number.isNaN(Number(limit))) return invalidParamsResponse();
     if (server.chanTypes.includes(target.charAt(0))) {
       const chan = await server.findChannel(target);
       if (!chan.hasUser(user))
@@ -45,7 +56,7 @@ module.exports = async function chathistory({ user, server, parameters }) {
     const batchId = randomUUID();
     const batchStartCmd = new Message(server, "BATCH", [`+${batchId}`, "chathistory", target]);
     const batchEndCmd = new Message(server, "BATCH", [`-${batchId}`]);
-    let timestampOrMsgIdEnd;
+    let timestampOrMsgIdEnd, invalidParams;
     const timestamps = await Promise.all(timestampsOrMsgIds.map(async t => {
       if (t === '*') return false;
       let [type, value] = t.split('=');
@@ -58,10 +69,14 @@ module.exports = async function chathistory({ user, server, parameters }) {
         });
         value = new Date(msg?.tags?.time || Date.now());
       } else if (type !== "timestamp") {
-        return user.send(server, "FAIL", ["CHATHISTORY", "INVALID_PARAMS", ":Invalid chathistory parameters. Please see: https://ircv3.net/specs/extensions/chathistory for the expected parameters."]);
+        invalidParams = true;
+        return;
       }
       return new Date(value);
-    }))
+    }));
+    if(invalidParams) {
+      return invalidParamsResponse();
+    }
     if (parameters.length > 4) {
       timestampOrMsgIdEnd = timestamps[1];
     }
@@ -97,11 +112,13 @@ module.exports = async function chathistory({ user, server, parameters }) {
       default:
         return user.send(server, "FAIL", ["CHATHISTORY", "UNKNOWN_COMMAND", ":Invalid subcommand."]);
     }
+    let getCriteria;
     if (['#', '&'].indexOf(target.charAt(0)) === -1) {
 
       logger.trace(user.mask());
-      criteria = {
+      getCriteria = () => ({
         ...criteria,
+        'tags."+draft/conf-cmd"': null,
         $or: [
           {
             target: user.nickname,
@@ -116,24 +133,45 @@ module.exports = async function chathistory({ user, server, parameters }) {
             prefix: user.mask()
           }
         ]
-      }
+      });
     } else {
-      criteria.target = target;
+      getCriteria = () => ({...criteria, target});
+    }
+    const eventPlayback = user.cap.list.includes('draft/event-playback');
+    if (eventPlayback) {
+      const nonEventMessages = await ChatLog.findAll({
+        where: symbolify({
+          ...criteria, 
+          command: {
+            $in: VISIBLE_CMDS
+          }
+        }), 
+        order: [sort],
+        limit
+      });
+      const first = nonEventMessages[0];
+      const last = nonEventMessages[nonEventMessages.length-1];
+      const earliestTs = first.timestamp < last.timestamp ? first.timestamp : last.timestamp;
+      const latestTs = earliestTs === first ? last.timestamp : first.timestamp;
+      if (nonEventMessages.length) {
+        criteria = { timestamp: { $gt: earliestTs, $lt: latestTs } };
+      }
     }
     logger.debug("Chathistory criteria:", criteria);
     logger.debug("Sort:", sort);
     let messages = await ChatLog.findAll({
       where: symbolify({
-        ...criteria, command: {
-          $in: ['PRIVMSG', 'NOTICE', 'BATCH'].concat(user.cap.list.includes('draft/event-playback')
-            ? ['TAGMSG', 'JOIN', 'PART', 'QUIT', 'MODE', 'TOPIC', 'NICK']
+        ...getCriteria(), 
+        command: {
+          $in: MSG_CMDS.concat(eventPlayback
+            ? EVENT_CMDS
             : []
           )
         }
       }), 
       order: [sort],
-      limit: parameters.pop()
-    })
+      limit: eventPlayback ? undefined : limit
+    });
 
     // query.limit(Math.max(Math.round/(limit / server.chatBatchSize), 1));
     // const matchingLogs = await query;
