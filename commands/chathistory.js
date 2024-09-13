@@ -141,7 +141,7 @@ module.exports = async function chathistory({ user, server, parameters }) {
     if (eventPlayback) {
       const nonEventMessages = await ChatLog.findAll({
         where: symbolify({
-          ...criteria, 
+          ...getCriteria(), 
           command: {
             $in: VISIBLE_CMDS
           }
