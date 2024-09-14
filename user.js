@@ -275,9 +275,6 @@ class User extends Duplex {
         }
       }
     }
-    if (message.command === 'BATCH') {
-      delete message.tags.batch;
-    }
 
     await this.server.saveToChatLog(message);
     message.ephemeral = true;

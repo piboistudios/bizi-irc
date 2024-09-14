@@ -119,6 +119,7 @@ module.exports = async function chathistory({ user, server, parameters }) {
       getCriteria = () => ({
         ...criteria,
         'tags."+draft/conf-cmd"': null,
+        
         $or: [
           {
             target: user.nickname,
@@ -135,7 +136,12 @@ module.exports = async function chathistory({ user, server, parameters }) {
         ]
       });
     } else {
-      getCriteria = () => ({...criteria, target});
+      getCriteria = () => ({
+        ...criteria, 
+        'tags."+draft/conf-cmd"': null,
+        target
+        
+      });
     }
     const eventPlayback = user.cap.list.includes('draft/event-playback');
     if (eventPlayback) {
@@ -157,7 +163,7 @@ module.exports = async function chathistory({ user, server, parameters }) {
         criteria = { timestamp: { $gt: earliestTs, $lt: latestTs } };
       }
     }
-    logger.debug("Chathistory criteria:", criteria);
+    logger.debug("Chathistory criteria:", getCriteria());
     logger.debug("Sort:", sort);
     let messages = await ChatLog.findAll({
       where: symbolify({
@@ -192,6 +198,7 @@ module.exports = async function chathistory({ user, server, parameters }) {
     //   }
     // } while (current && messages.length <= limit)
     // await cursor.close();
+    if (sort[1] === 'DESC') messages.reverse()
     const batch = messages.map(m => {
       m.tags = m.tags || {};
       m.tags.batch = m.tags.batch || batchId;

@@ -179,7 +179,7 @@ class Channel extends Sequelize.Model {
       }
       return;
     }));
-    this.users.length && await this.server.saveToChatLog(message);
+    !this.users.length && await this.server.saveToChatLog(message);
   }
   /**
    * 

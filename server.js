@@ -361,6 +361,7 @@ class Server extends net.Server {
     try {
       if (m instanceof Message && !m.ephemeral) {
         if (this.chatLogCommandWhitelist.indexOf(m?.command.toString().toUpperCase()) === -1) return;
+        m.ephemeral = true;
         // if (this.chatlog.messages.find(m2 => m.tags?.msgid && m.tags.msgid === m2.tags?.msgid)) return;
         logger.debug("saving to chat log...", m);
         const message = new ChatLog({

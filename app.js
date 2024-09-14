@@ -48,7 +48,8 @@ async function main(opts) {
     logger.trace('log:', await ChatLog.findOne({
         where: {
 
-            'tags."+draft/conf-cmd"': null
+            'tags."+draft/conf-cmd"': null,
+            timestamp: {[Op.ne]: null}
         }
     }));
     // const sequelize = new Sequelize({
