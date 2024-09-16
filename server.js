@@ -618,6 +618,13 @@ class Server extends net.Server {
       .catch(e => {
         message.user && e && message.user.send(this, "FAIL", [message.command, 'ERROR', '"' + e]);
       })
+      .then(() => {
+        const label = message?.tags?.label;
+        if (label !== undefined && message.needsAck) {
+          const ack = new Message(null, 'ACK', [], { label })
+          message.user.send(null, ack);
+        }
+      })
   }
 
   /**

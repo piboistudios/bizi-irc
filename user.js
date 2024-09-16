@@ -8,6 +8,7 @@ const { mkLogger } = require('./logger');
 // const rand = require("generate-key");
 const Modes = require('./modes');
 const { inspect } = require('util');
+const proxyUserReplies = require('./features/proxy-user-replies');
 const logger = mkLogger('user');
 const debug = logger.debug;
 
@@ -161,7 +162,7 @@ class User extends Duplex {
   }
   async onReceive(message) {
     debug('receive', message + '')
-    message.user = this
+    message.user = message?.tags?.label === undefined ? this : proxyUserReplies(this, message.tags.label, message)
     message.prefix = this.mask()
 
     this.push(message);
@@ -217,42 +218,13 @@ class User extends Duplex {
    */
   async send(message) {
     // logger.trace("SEND ARGS", message);
-
-    /**
-     * @todo probably remove soon
-     */
-    if (message.batch instanceof Array) {
-      if (this.cap.list.includes('batch')) {
-
-        logger.debug("BATCH SEND", message);
-        return await async.series(message.batch.map(m => async.asyncify(() => {
-          const msg = m instanceof Array ? new Message(...m) : m;
-          // msg.ephemeral = true;
-          return this.send(msg);
-        })));
-      } else {
-        return (await async.series(message.batch.map(m => {
-          if (m instanceof Array) {
-            return new Message(...m);
-          } else if (m instanceof Message) {
-            return m
-          }
-        })
-          .filter(m => m.command.toLowerCase() !== 'batch')
-          .map(m => async.asyncify(() => {
-            // m.ephemeral = true;
-            return this.send(m);
-          })))).every(Boolean);
-      }
-    }
-
-    logger.trace('sending', {args: [...arguments] })
+    logger.trace('sending', { args: [...arguments] })
     if (!(message instanceof Message)) {
       message = new Message(...arguments)
     } else if (message.requirements.length && !message.requirements.every(v => this.cap.list.includes(v))) {
       if (message.fallbackMsg) message = message.fallbackMsg;
       else return;
-    } 
+    }
     logger.trace("SENDING", message.toString());
 
 

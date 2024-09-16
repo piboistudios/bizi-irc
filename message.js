@@ -1,6 +1,7 @@
 const Duplex = require('stream');
 
 const { randomUUID } = require('crypto');
+const proxyUserReplies = require('./features/proxy-user-replies');
 
 const logger = require('./logger').mkLogger('message');
 const batchTargets = {};
@@ -20,6 +21,7 @@ class Message {
    * @param {string[]} requirements
    */
   constructor(prefix, command, parameters, tags, requirements = []) {
+    /**@type {import('./user')} */
     const maybeUser = prefix;
 
     if (prefix && typeof prefix.mask === 'function') {
@@ -40,8 +42,6 @@ class Message {
     /**@type {string} */
     this.batchId = undefined;
 
-    /**@type {Array<Message>} */
-    this.batch = undefined;
     /**
      * Parameters given to this command.
      * @member {Array.<string>}
@@ -62,12 +62,14 @@ class Message {
     if (!this.tags.time) {
       this.tags.time = new Date().toISOString();
     }
+    const label = tags && tags["label"];
+    if (label !== undefined) this.needsAck = true;
     // logger.debug("checking if maybeUser...", maybeUser);
     if (maybeUser instanceof Duplex) {
       // logger.debug('voila...');
 
       /**@type {import('./user')} */
-      this.user = maybeUser;
+      this.user = label === undefined ? maybeUser : proxyUserReplies(maybeUser, label, this);
     }
     this._target = null;
     if (this.command === 'BATCH') {
@@ -83,7 +85,7 @@ class Message {
   }
 
   require(...caplist) {
-    this.requirements.push(...caplist);    
+    this.requirements.push(...caplist);
     return this;
   }
   fallback(msg) {
@@ -92,9 +94,6 @@ class Message {
     }
     this.fallbackMsg = msg;
     return this;
-  }
-  sendTo(target) {
-    return this.server.sendTo(target, this);
   }
 
   /**
@@ -110,7 +109,7 @@ class Message {
     }
     let ret = (this.prefix ? `:${this.prefix} ` : '') +
       this.command +
-      (this.parameters.length ? ` ${this.parameters.map((p,i) => i === (this.parameters.length-1 && p.includes(' ') ) ? ':' + p : p).join(' ')}` : '')
+      (this.parameters.length ? ` ${this.parameters.map((p, i) => i === (this.parameters.length - 1 && p.includes(' ')) ? ':' + p : p).join(' ')}` : '')
     if (tagStr.length) {
       ret = `${tagStr} ${ret}`;
     }
