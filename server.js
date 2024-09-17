@@ -82,8 +82,8 @@ class Server extends net.Server {
     this.users = [];
     this._middleware = [];
     this._defaultHandlers = [];
-    this.hostname = options.hostname;
-    logger = logger.sub(this.hostname);
+    this.servername = options.servername || options.hostname;
+    logger = logger.sub(this.servername);
     this.maxScrollbackSize = 64;
     this.chatBatchSize = 64;
     this.chatSaveInterval = (1000 * 60) * 15;
@@ -169,7 +169,7 @@ class Server extends net.Server {
     this.created = new Date();
     /**@type {Map<string, import('./channel').Channel>} */
     this.channels = new Map();
-    this.hostname = options.hostname || 'localhost';
+    this.servername = options.hostname || 'localhost';
 
 
     this.addCnx = sock => {
@@ -411,14 +411,14 @@ class Server extends net.Server {
    */
   welcome(user) {
     user.send(this, '001', [user.nickname, ':Welcome']);
-    user.send(this, '002', [user.nickname, `:Your host is ${this.hostname} running version ${pkg.version}`]);
+    user.send(this, '002', [user.nickname, `:Your host is ${this.servername} running version ${pkg.version}`]);
     user.send(this, '003', [user.nickname, `:This server was created ${this.created}`]);
-    user.send(this, '004', [user.nickname, pkg.name, pkg.version]);
+    user.send(this, '004', [user.nickname, this.servername, pkg.name, pkg.version]);
 
     user.send(this, '005', [user.nickname, ...this.isupport, ':are supported by this server']);
     user.send(this, 'MODE', [user.nickname, '+w']);
     if (user.principal) // cloak authenticated user ips
-      this.chghost(user, this.hostname);
+      this.chghost(user, this.servername);
     if (this.motd) {
       const send = (line) => {
 
@@ -624,6 +624,7 @@ class Server extends net.Server {
           const ack = new Message(null, 'ACK', [], { label })
           message.user.send(ack);
         }
+        message.executing = false;
       })
   }
 
@@ -647,7 +648,7 @@ class Server extends net.Server {
    * @return {string} Mask.
    */
   mask() {
-    return this.hostname;
+    return this.servername;
   }
 }
 

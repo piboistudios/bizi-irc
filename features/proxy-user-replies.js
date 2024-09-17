@@ -8,8 +8,9 @@ module.exports = function proxyUserReplies(user, label, src) {
           switch (prop) {
             case 'send':
               return function labeledResponse(message) {
+                if (src.executing === false) return user.send(...arguments);
                 logger.trace('sending labeled?', ...arguments);
-                if (message.batch) {
+                if (message?.batch instanceof Array) {
                   return user.send(message);
                 }
                 else if (!(message instanceof Message)) {

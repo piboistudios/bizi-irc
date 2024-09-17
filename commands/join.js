@@ -50,7 +50,7 @@ async function join(opts) {
       await channel.join(user)
     } catch (e) {
       logger.error("Unable to join channel:", e);
-      return user.send()
+      return;
     }
 
     if (user.principal) channel.send(user, 'JOIN', [channel.name, user.username, `:${user.realname}`], tags)

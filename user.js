@@ -11,7 +11,7 @@ const { inspect } = require('util');
 const proxyUserReplies = require('./features/proxy-user-replies');
 const logger = mkLogger('user');
 const debug = logger.debug;
-
+const crypto = require('crypto');
 // see: https://libera.chat/guides/usermodes
 
 
@@ -218,7 +218,7 @@ class User extends Duplex {
    * @returns {Promise<Boolean>}
    */
   async send(message) {
-     if (message.batch instanceof Array) {
+    if (message?.batch instanceof Array) {
       if (this.cap.list.includes('batch')) {
         logger.debug("BATCH SEND", message);
         return await async.series(message.batch.map(m => async.asyncify(() => {
@@ -382,9 +382,9 @@ class User extends Duplex {
     return this.mask();
   }
   [require('util').inspect.custom]() {
-    const { channels, cap, nickname, hostname } = this;
+    const { channels, cap, nickname, hostname, sid, } = this;
     const mask = this.mask();
-    const r = { channels, cap, nickname, hostname, mask };
+    const r = { channels, cap, nickname, hostname, sid, mask };
     return require('util').inspect(r);
   }
   inspect() {

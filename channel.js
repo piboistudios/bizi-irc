@@ -85,6 +85,7 @@ class Channel extends Sequelize.Model {
    */
   async join(user) {
     if (this.hasUser(user)) {
+      logger.fatal("user already in channel", this.onlineUsers);
       throw new Error(`User ${user.nickname} has already join this channel ${this.name}`);
     } else {
       user.join(this);
@@ -112,7 +113,7 @@ class Channel extends Sequelize.Model {
    * @param {import('./user')} user Parting user.
    */
   async part(user) {
-    let i = this.users.indexOf(user)
+    let i = this.users.findIndex(u => u.sid === user.sid)
     if (i !== -1) {
       this.users.splice(i, 1)
     }
