@@ -106,6 +106,7 @@ class User extends Duplex {
       list: [],
       version: 0
     }
+    this.sid = crypto.randomUUID();
     /**@type {import('./models/user').Schema & import('mongoose').Document<any, any, import('./models/user').Schema>} */
     this.principal = null;
 
@@ -217,6 +218,29 @@ class User extends Duplex {
    * @returns {Promise<Boolean>}
    */
   async send(message) {
+     if (message.batch instanceof Array) {
+      if (this.cap.list.includes('batch')) {
+        logger.debug("BATCH SEND", message);
+        return await async.series(message.batch.map(m => async.asyncify(() => {
+          const msg = m instanceof Array ? new Message(...m) : m;
+          // msg.ephemeral = true;
+          return this.send(msg);
+        })));
+      } else {
+        return (await async.series(message.batch.map(m => {
+          if (m instanceof Array) {
+            return new Message(...m);
+          } else if (m instanceof Message) {
+            return m
+          }
+        })
+          .filter(m => m.command.toLowerCase() !== 'batch')
+          .map(m => async.asyncify(() => {
+            // m.ephemeral = true;
+            return this.send(m);
+          })))).every(Boolean);
+      }
+    }
     // logger.trace("SEND ARGS", message);
     logger.trace('sending', { args: [...arguments] })
     if (!(message instanceof Message)) {

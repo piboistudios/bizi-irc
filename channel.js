@@ -134,12 +134,12 @@ class Channel extends Sequelize.Model {
   /**
    * Checks if a user is in this channel.
    *
-   * @param {User} user User to look for.
+   * @param {import('./user')} user User to look for.
    *
    * @return boolean Whether the user is here.
    */
   hasUser(user) {
-    return this.onlineUsers.indexOf(user) !== -1
+    return this.onlineUsers.findIndex(u => user.sid === u.sid) !== -1
   }
 
 

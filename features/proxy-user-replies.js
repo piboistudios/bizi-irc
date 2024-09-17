@@ -9,8 +9,10 @@ module.exports = function proxyUserReplies(user, label, src) {
             case 'send':
               return function labeledResponse(message) {
                 logger.trace('sending labeled?', ...arguments);
-
-                if (!(message instanceof Message)) {
+                if (message.batch) {
+                  return user.send(message);
+                }
+                else if (!(message instanceof Message)) {
                   message = new Message(...arguments)
                 }
                 message.tags ??= {};

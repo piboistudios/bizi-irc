@@ -622,7 +622,7 @@ class Server extends net.Server {
         const label = message?.tags?.label;
         if (label !== undefined && message.needsAck) {
           const ack = new Message(null, 'ACK', [], { label })
-          message.user.send(null, ack);
+          message.user.send(ack);
         }
       })
   }
