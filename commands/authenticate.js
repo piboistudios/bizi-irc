@@ -65,13 +65,26 @@ module.exports = async function auth({ user, server, parameters: [dataStr] }) {
         user.nickname = user.principal.nickname || user.principal.username || user.nickname || user.nickname;
         user.username = (!isNew && user.principal.username) || principal?.meta?.profile?.username || user.username;
         user.realname = (!isNew && user.principal.realname) || principal?.meta?.profile?.displayName || user.realname;
-        let modes = isNew ? await Modes.mk() : await Modes.findByPk(localPrincipal._modes);
+        let modes = isNew ? (user.modes || await Modes.mk()) : await Modes.findByPk(localPrincipal._modes);
         if (!modes) {
+            logger.trace("user doesn't have modes?", localPrincipal._modes);
             modes = await Modes.mk();
-            await modes.save();
         }
-        if (isNew) await modes.save();
+        modes.isUser = true;
+        if (isNew) {
+            modes.add("R");
+        }
+        if (user.secure) {
+            modes.add('Z');
+        } else {
+            modes.unset('Z');
+        }
+        await modes.save();
+        logger.trace("user modes:", modes);
+        
         localPrincipal._modes = modes.id;
+        user.modes = modes;
+        logger.trace("user.modes:", user.modes);
         localPrincipal.meta ??= {};
         localPrincipal.meta.logins ??= [];
         server.docs.push(user.principal);
@@ -93,7 +106,7 @@ module.exports = async function auth({ user, server, parameters: [dataStr] }) {
 
             dupe = await server.findUser(user.nickname, true);
             logger.trace("Dupe?", dupe);
-            if (dupe !== user) {
+            if (!user.is(dupe)) {
                 dupe.onReceive(new Message(dupe, 'QUIT', [':switched connections.']));
             }
         }));

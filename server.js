@@ -18,7 +18,7 @@ const async = require('async');
 const ChatLog = require('./models/chatlog');
 const fmtRes = require('./features/fmt-res');
 const { Modes } = require('./modes');
-const SERVER_SET_MODES = 'zNAoO';
+const SERVER_SET_MODES = 'ZNAoO';
 
 /**
  * Represents a single IRC server.
@@ -135,6 +135,8 @@ class Server extends net.Server {
     ];
     this.realnameMaxLength = 256;
     this.capabilities = [
+      'draft/search',
+      // 'draft/persistence',
       'multi-prefix',
       'extended-join',
       // 'account-notify',
@@ -660,7 +662,11 @@ class Server extends net.Server {
       })
       .then(() => {
         const label = message?.tags?.label;
-        if (label !== undefined && message.needsAck) {
+        if (
+          message?.user?.principal &&
+          label !== undefined &&
+          message.needsAck
+        ) {
           const ack = new Message(null, 'ACK', [], { label })
           message.user.send(ack);
         }

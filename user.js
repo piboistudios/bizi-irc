@@ -156,8 +156,8 @@ class User extends Duplex {
     // sock.on('readable', () => this.emit('readable'));
   }
   async setup() {
-    this.modes = await Modes.mk({})
-
+    this.modes ??= await Modes.mk({});
+    this.modes.add('Z');
     this.initialized = true;
     logger.trace("Setup complete");
   }

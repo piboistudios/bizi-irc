@@ -2,7 +2,6 @@ const { Model, Sequelize } = require('sequelize');
 
 const logger = require('./logger').mkLogger('ircs:modes');
 
-const MODES = ['flagModes', 'paramModes', 'listModes'];
 const CHANNEL_MODE_CHARS = {
   flagModeChars: 'psitnmcCFgQrRTuW'.split(''),
   paramModeChars: 'lkfjkH'.split(''),

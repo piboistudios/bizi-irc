@@ -42,4 +42,5 @@ module.exports = {
   // Disconnects.
   QUIT: require('./quit'),
   REDACT: require('./redact'),
+  SEARCH: require('./search'),
 };

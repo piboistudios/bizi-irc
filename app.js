@@ -184,8 +184,8 @@ async function main(opts) {
                 cnx.send('' + m);
             }
             const user = server.addCnx(duplex);
+            user.secure = true; /** just assume TLS.. ye */
             cnx.on('message', m => {
-                logger.debug("GOT MESSAGE:", m, '' + m);
                 write(m + '\r\n');
             });
             duplex.on('end', () => {

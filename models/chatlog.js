@@ -11,7 +11,7 @@ const ATTRIBUTES =  /**@type {const}*/({
     target: { type: { name: "STRING" } },
     timestamp: { type: { name: "DATE" } },
     command: { type: { name: "STRING" } },
-    parameters: { type: { name: "JSON" } },
+    parameters: { type: { name: "JSONB" } },
     tags: { type: { name: "JSON" } },
 })
 /**

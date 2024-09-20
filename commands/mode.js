@@ -72,15 +72,22 @@ module.exports = async function mode(
     }
   }
   logger.trace("modes?", modes);
+  const targetModes = dest.modes;
+
   if (!modes) {
     // bare /MODE: return current modes
-    const modeString = dest.modes.toString()
+    const modeString = targetModes.toString()
     logger.trace("Sending mode string:", modeString);
     user.send(server, modeIsCode,
-      [user.nickname, target, ...modeString.split(' ')])
+      [
+        isChannel && user.nickname, 
+        target, 
+        ...modeString.split(' ')
+      ]
+      .filter(Boolean)
+    )
     return
   }
-
   const i1 = modes.indexOf('+');
   const i2 = modes.indexOf('-');
   let viewOnly = i1 === -1 && i2 === -1;
@@ -91,7 +98,7 @@ module.exports = async function mode(
     [chars1, chars2] = [modes.slice(i2), modes.slice(i1, i2)];
   params = [...new Set(params)];
   logger.trace()
-  logger.trace("modes before?", dest.modes.toJSON());
+  logger.trace("modes before?", targetModes.toJSON());
   let modeValid = false;
   let modesChanged = false;
   const updated = () => {
@@ -134,9 +141,9 @@ module.exports = async function mode(
           if (action === '+') {
             const paramAlreadySet = params.length ?
               params.find(param =>
-                dest.modes.has(mode, param)
+                targetModes.has(mode, param)
               ) :
-              dest.modes.has(mode);
+              targetModes.has(mode);
             if (paramAlreadySet)
               return user.send(
                 server, "FAIL", [
@@ -147,7 +154,7 @@ module.exports = async function mode(
               ]
               );
             updated();
-            dest.modes.add(mode, params, i);
+            targetModes.add(mode, params, i);
             // if (isChannel && mode === 'b') {
             //   params.forEach(banned => {
             //     user.onReceive(new Message(user, 'KICK', [target, banned, ":banned"]))
@@ -160,7 +167,7 @@ module.exports = async function mode(
                   at: Date.now() / 1000
                 })
               });
-              // dest.modes.markUpdated();
+              // targetModes.markUpdated();
             }
             if (isChannel && mode == 'I') {
               params.forEach(invited => {
@@ -169,13 +176,13 @@ module.exports = async function mode(
                   at: Date.now() / 1000
                 })
               })
-              // dest.modes.markUpdated();
+              // targetModes.markUpdated();
             }
           } else if (action === '-') {
             const paramAlreadyUnset = params.length ?
               params.find(
-                param => !dest.modes.has(mode, param)
-              ) : !dest.modes.has(mode);
+                param => !targetModes.has(mode, param)
+              ) : !targetModes.has(mode);
             if (paramAlreadyUnset)
               return user.send(
                 server,
@@ -188,27 +195,27 @@ module.exports = async function mode(
                 ]
               );
             updated();
-            dest.modes.unset(mode, params)
+            targetModes.unset(mode, params)
             if (isChannel && mode == 'W') {
-              dest.modes.listModes['x'] = [];
-              // dest.modes.markUpdated();
+              targetModes.listModes['x'] = [];
+              // targetModes.markUpdated();
 
             }
             if (isChannel && mode == 'b') {
               params.forEach(banned => {
                 dest.meta.banned.delete(banned);
               });
-              // dest.modes.markUpdated();
+              // targetModes.markUpdated();
             }
             if (isChannel && mode == 'I') {
               params.forEach(invited => {
                 dest.meta.invited.delete(invited);
               })
-              // dest.modes.markUpdated();
+              // targetModes.markUpdated();
             }
           } else if (isChannel) {
             if (mode === 'I') {
-              await ((dest.modes.retrieve('I') || [])
+              await ((targetModes.retrieve('I') || [])
                 .reduce(async (chain, nick) => {
                   await chain;
                   const audit = dest?.meta?.invited?.get(nick);
@@ -237,7 +244,7 @@ module.exports = async function mode(
                 ])
             } else if (mode == 'b') {
 
-              await ((dest.modes.retrieve('b') || [])
+              await ((targetModes.retrieve('b') || [])
                 .reduce(async (chain, nickmask) => {
                   await chain;
                   const audit = dest?.meta?.banned?.get(nickmask);
@@ -283,8 +290,8 @@ module.exports = async function mode(
       }
     }, Promise.resolve()));
   if (modesChanged) {
-    await dest.modes.save();
-    logger.trace("modes after?", dest.modes.toJSON());
+    await targetModes.save();
+    logger.trace("modes after?", targetModes.toJSON());
 
   }
 

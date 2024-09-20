@@ -33,6 +33,7 @@
     "express": "^4.19.2",
     "flush-write-stream": "^2.0.0",
     "haraka-config": "^1.4.0",
+    "irc-framework": "^4.13.1",
     "javascript-time-ago": "^2.5.10",
     "minimatch": "^5.1.0",
     "object-merge": "^2.5.1",

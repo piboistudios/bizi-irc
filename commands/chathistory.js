@@ -179,25 +179,6 @@ module.exports = async function chathistory({ user, server, parameters }) {
       limit: eventPlayback ? undefined : limit
     });
 
-    // query.limit(Math.max(Math.round/(limit / server.chatBatchSize), 1));
-    // const matchingLogs = await query;
-
-    // const cursor = query.cursor();
-    // let current;
-    // do {
-    //   current = await cursor.next();
-    //   if (current) {
-    //     const hist = getMessages(current)
-    //       .filter(
-    //         m => filter(m)
-    //       );
-    //     hist.length && logger.debug("History", hist);
-    //     messages.push(
-    //       ...hist
-    //     );
-    //   }
-    // } while (current && messages.length <= limit)
-    // await cursor.close();
     if (sort[1] === 'DESC') messages.reverse()
     const batch = messages.map(m => {
       m.tags = m.tags || {};
