@@ -45,7 +45,7 @@ module.exports = async function sendmsg(arg0) {
     const { user, server } = msg;
     const forwarded = new Message(user, msg.command, msg.parameters, { ...msg.tags, label: undefined });
     unauthorized ??= ({ user, server }) => {
-        user.send(user, "FAIL", [msg.command, 'NEED_REGISTRATION', ':You must be logged in to send messages. Anonymous users can only view previews of public chats.']);
+        user.send(server, "FAIL", [msg.command, 'NEED_REGISTRATION', ':You must be logged in to send messages. Anonymous users can only view previews of public chats.']);
         return server.sendSignUpNote(user, msg.command);
     };
     forbidden ??= ({ user, server }) => {

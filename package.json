@@ -36,6 +36,7 @@
     "javascript-time-ago": "^2.5.10",
     "minimatch": "^5.1.0",
     "object-merge": "^2.5.1",
+    "passport-openid-connect": "^0.1.0",
     "saslmechanisms": "^0.1.1",
     "selfsigned": "^2.1.1",
     "sequelize": "^6.37.3",

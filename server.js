@@ -18,7 +18,7 @@ const async = require('async');
 const ChatLog = require('./models/chatlog');
 const fmtRes = require('./features/fmt-res');
 const { Modes } = require('./modes');
-const SERVER_SET_MODES = 'zNoO';
+const SERVER_SET_MODES = 'zNAoO';
 
 /**
  * Represents a single IRC server.
@@ -131,11 +131,12 @@ class Server extends net.Server {
       'BOT=' + this.botFlag,
       'CHANMODES=l,k,o,v,b,I',
       'CHANTYPES=' + this.chanTypes.join(''),
-      'PREFIX='+PREFIX
+      'PREFIX=' + PREFIX
     ];
+    this.realnameMaxLength = 256;
     this.capabilities = [
       'multi-prefix',
-      // 'extended-join',
+      'extended-join',
       // 'account-notify',
       // 'batch',
       // 'invite-notify',
@@ -153,7 +154,7 @@ class Server extends net.Server {
       'chghost',
       'setname',
       'account-tag',
-      'account-notify',
+      // 'account-notify',
       // 'example.org/dummy-cap=dummyvalue',
       // 'example.org/second-dummy-cap',
       'typing',
@@ -286,6 +287,8 @@ class Server extends net.Server {
    * @returns 
    */
   async validateMode(user, dest, action, modeChars, params) {
+    if (typeof modeChars === 'string')
+      modeChars = modeChars.split('')
     const server = this;
     if (!action) return true;
     logger.trace('dest...', dest);
@@ -317,16 +320,26 @@ class Server extends net.Server {
     } else if (dest) {
       if (!user.principal) return false;
       const target = dest.target;
-      if (target !== user) {
+      if (!target.is(user)) {
         if (!user.isPrivileged) {
-          user.send(server, replies.ERR_NOPRIVILEGES, [user.nickname, ":Permission Denied- You're not an IRC operator"])
+          logger.trace(
+            "cannot set flags for another user",
+            { target, user }
+          );
+          user.send(server, replies.ERR_NOPRIVILEGES, [user.nickname, ":Permission Denied- You're not an IRC admin or operator"])
           return false;
         }
-        if (modeChars.split('').some(c => SERVER_SET_MODES.indexOf(c) !== -1)) {
-          if (!user.isAdmin) {
-            user.send(server, replies.ERR_NOPRIVILEGES, [user.nickname, ":Permission Denied- You're not an IRC operator"])
-            return false;
-          }
+      }
+      if (modeChars.some(c => SERVER_SET_MODES.indexOf(c) !== -1)) {
+        if (!user.isAdmin) {
+          logger.trace("Cannot set server set flags if not an admin", {
+            user,
+            isAdmin: user.isAdmin,
+            isOp: user.isOp,
+            modes: user.modes.flagModes
+          });
+          user.send(server, replies.ERR_NOPRIVILEGES, [user.nickname, ":Permission Denied- You're not an IRC admin"])
+          return false;
         }
       }
     }
@@ -399,11 +412,38 @@ class Server extends net.Server {
     user.channels.forEach(c => c.broadcast(msg));
   }
   /**
+   * @type {Server["sendSignUpNote"]}
+   */
+  failAndSendSignUp() {
+    this.sendAnonInteractFail(...arguments);
+    this.sendSignUpNote(...arguments);
+  }
+  /**
    * 
    * @param {import('./user')} user 
+   * @param {string} command
+   * @param {Object.<string, any>} tags
    */
-  sendSignUpNote(user, command, tags={}) {
-    return user.send(this, "NOTE", [command.toUpperCase(), "NEED_REGISTRATION", ":You can sign up at https://lou.network/auth/sign-up "], tags);
+  sendSignUpNote(user, command, tags = {}) {
+    return user.send(this, "NOTE", [
+      command.toUpperCase(),
+      "NEED_REGISTRATION",
+      ":You can sign up at https://lou.network/auth/sign-up"
+    ], tags);
+  }
+  /**
+   * 
+   * @param {import('./user')} user 
+   * @param {string} command
+   * @param {Object.<string, any>} tags
+   */
+  sendAnonInteractFail(user, command, tags = {}) {
+    return user.send(this, "FAIL", [
+      command.toUpperCase(),
+      'NEED_REGISTRATION',
+      ':You must be logged in to interact. Anonymous users can only view previews of public chats.'],
+      tags
+    );
   }
   /**
    * 
@@ -480,7 +520,7 @@ class Server extends net.Server {
         const flagModeChars = ['p', 's', 'i', 't', 'n', 'm']
         const paramModeChars = ['l', 'k']
         const listModeChars = ['o', 'v', 'b', 'I', 'h']
-        modes = await Modes.mk({ });
+        modes = await Modes.mk({});
       }
       channel.modes = modes;
       this.channels.set(channelName, channel);

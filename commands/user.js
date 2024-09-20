@@ -29,8 +29,8 @@ function USER({ user, server, parameters }) {
   const [username, hostname, servername, realname] = parameters;
   debug('USER', user.mask(), username, hostname, servername, realname);
 
-  user.username = username;
-  user.realname = realname;
+  user.username = username.slice(0,32);
+  user.realname = realname.slice(0,256);
   user.hostname = hostname;
   user.servername = servername;
   if (!user.cap.version) {

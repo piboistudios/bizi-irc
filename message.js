@@ -109,7 +109,19 @@ class Message {
     }
     let ret = (this.prefix ? `:${this.prefix} ` : '') +
       this.command +
-      (this.parameters.length ? ` ${this.parameters.map((p, i) => i === (this.parameters.length - 1 && p.includes(' ')) ? ':' + p : p).join(' ')}` : '')
+      (this.parameters.length ? ' ' +
+        this.parameters.map(
+          (p, i) => (
+            i === this.parameters.length - 1 && 
+            p.includes(' ') &&
+            p.charAt(0) !== ':'
+          ) ?
+            ':' + p :
+            p
+        )
+          .join(' ') :
+        ''
+      )
     if (tagStr.length) {
       ret = `${tagStr} ${ret}`;
     }

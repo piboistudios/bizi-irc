@@ -25,6 +25,7 @@ module.exports = async function part({ user, server, tags, parameters: [channelN
   }
 
   await channel.part(user)
+  if (!user.principal) return;
   const msg = new Message(user, 'PART', [channel.name], tags);
   channel.send(msg)
   user.send(msg)

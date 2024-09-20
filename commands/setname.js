@@ -1,8 +1,9 @@
 const {
 } = require('../replies')
-const { debuglog } = require('util');
+
 const Message = require('../message');
-const debug = debuglog('ircs:commands:setname')
+const { mkLogger } = require('../logger');
+const logger = mkLogger('ircs:commands:setname')
 /** 
  *  @param {{
  *  user: import('../user'),
@@ -11,12 +12,12 @@ const debug = debuglog('ircs:commands:setname')
  * }} param0 
  * @returns 
  */
-module.exports = function setname(msg) {
+module.exports = async function setname(msg) {
   let { user, server, tags, parameters: [realname] } = msg;
   if (!user.principal) return;
   realname = realname.trim()
 
-  debug('setname', user.mask(), realname)
+  logger.debug('setname', user.mask(), realname)
 
   if (!realname || realname.length === 0) {
     return user.send(server, 'FAIL', ['SETNAME', ':Invalid real name: no real name given']);
@@ -26,8 +27,11 @@ module.exports = function setname(msg) {
   }
 
   user.realname = realname;
-  if (user.principal) user.principal.realname = realname;
-  const reply = new Message(user, "SETNAME", [":" + user.realname], {})
+  if (user.principal) {
+    user.principal.realname = realname;
+    await user.principal.save();
+  }
+  const reply = new Message(user, "SETNAME", [user.realname], {})
   user.send(reply)
   user.channels.forEach(chan => chan.broadcast(reply));
 }

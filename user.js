@@ -274,8 +274,8 @@ class User extends Duplex {
 
     await this.server.saveToChatLog(message);
     message.ephemeral = true;
-    const lastParam = message.parameters[message.parameters.length - 1];
-    if (lastParam && lastParam.indexOf(' ') !== -1 && lastParam[0] !== ':') message.parameters[message.parameters.length - 1] = ':' + lastParam;
+    // const lastParam = message.parameters[message.parameters.length - 1];
+    // if (lastParam && lastParam.indexOf(' ') !== -1 && lastParam[0] !== ':') message.parameters[message.parameters.length - 1] = ':' + lastParam;
     return this.socket ? new Promise((resolve, reject) => {
       function done() {
         logger.info("ENDING WRITE", ...arguments);
@@ -288,7 +288,9 @@ class User extends Duplex {
       }
     }) : Promise.resolve(true);
   }
-
+  get ref() {
+    return this;
+  }
   /**
    * Check if this user is matched by a given mask.
    *
@@ -299,6 +301,9 @@ class User extends Duplex {
   matchesMask(mask) {
     // simple & temporary
     return minimatch(this.mask() || '', mask);
+  }
+  is(user) {
+    return this.ref === user.ref;
   }
   get isLocalOp() {
     return this.modes.has('O')

@@ -63,7 +63,8 @@ module.exports = async function auth({ user, server, parameters: [dataStr] }) {
         if (isNew) localPrincipal = new User(principal);
         user.principal = localPrincipal;
         user.nickname = user.principal.nickname || user.principal.username || user.nickname || user.nickname;
-        user.username = user.principal.username || user.username;
+        user.username = (!isNew && user.principal.username) || principal?.meta?.profile?.username || user.username;
+        user.realname = (!isNew && user.principal.realname) || principal?.meta?.profile?.displayName || user.realname;
         let modes = isNew ? await Modes.mk() : await Modes.findByPk(localPrincipal._modes);
         if (!modes) {
             modes = await Modes.mk();

@@ -91,6 +91,9 @@ class Channel extends Sequelize.Model {
       user.join(this);
       this.users.push(user);
     }
+    if (this.modes.has('x', user.nickname)) {
+      this.modes.unset('x', user.nickname);
+    }
     if (this._isNew && this.users.length === 1) {
       this.addOp(user);
       this.addHalfOp(user);
@@ -113,7 +116,7 @@ class Channel extends Sequelize.Model {
    * @param {import('./user')} user Parting user.
    */
   async part(user) {
-    let i = this.users.findIndex(u => u.sid === user.sid)
+    let i = this.users.findIndex(u => user.is(u))
     if (i !== -1) {
       this.users.splice(i, 1)
     }
@@ -140,7 +143,7 @@ class Channel extends Sequelize.Model {
    * @return boolean Whether the user is here.
    */
   hasUser(user) {
-    return this.onlineUsers.findIndex(u => user.sid === u.sid) !== -1
+    return this.onlineUsers.findIndex(u => user.is(u)) !== -1
   }
 
 

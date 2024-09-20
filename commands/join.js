@@ -27,7 +27,7 @@ async function join(opts) {
   for (const channelName of channelNames.split(',')) {
     const channel = (await server.getChannel(channelName));
     if (channel) {
-
+      
       if (!channel.modes.has('q', user.nickname)) {
         /**@type {Array} */
         const banlist = channel.modes.retrieve('b') || [];
@@ -52,8 +52,19 @@ async function join(opts) {
       logger.error("Unable to join channel:", e);
       return;
     }
+    // only send to user if they're anonymous
+    await (user.principal ? channel : user)
+      .send(
+        user,
+        'JOIN',
+        [
+          channel.name,
+          user.username,
+          `:${user.realname}`
+        ],
+        tags
+      );
 
-    if (user.principal) channel.send(user, 'JOIN', [channel.name, user.username, `:${user.realname}`], tags)
     // if (!channel.modes.has('m')) channel.addVoice(user);
     names(Object.assign(
       {},
@@ -67,6 +78,9 @@ async function join(opts) {
     } else {
       user.send(server, RPL_NOTOPIC, [user.nickname, channel.name, ':No topic is set.'])
     }
+
+    if (!user.principal)
+      server.sendSignUpNote(user, 'JOIN');
   }
 }
 

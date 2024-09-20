@@ -6,6 +6,8 @@ module.exports = function proxyUserReplies(user, label, src) {
     return new Proxy(user, {
         get(user, prop) {
           switch (prop) {
+            case 'ref':
+              return user;
             case 'send':
               return function labeledResponse(message) {
                 if (src.executing === false) return user.send(...arguments);
