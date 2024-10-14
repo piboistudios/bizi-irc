@@ -32,9 +32,9 @@ function USER({ user, server, parameters }) {
   user.username = username.slice(0,32);
   user.realname = realname.slice(0,256);
   user.hostname = hostname;
-  user.servername = servername;
+  user.servername = server.servername;
   if (!user.cap.version) {
-    server.welcome(user);
+    return server.welcome(user);
   }
 }
 

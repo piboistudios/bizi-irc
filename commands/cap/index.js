@@ -33,7 +33,8 @@ module.exports = function cap({ user, server, parameters: [verb, ...args] }) {
     case 'END':
       logger.trace("ENDING CAP", user.principal);
       logger.trace("USER", user);
-      return user.authenticated && server.welcome(user);
+
+      user.cap.registered = true;
   }
   // if (!nickname || nickname.length === 0) {
   //   return user.send(server, ERR_NONICKNAMEGIVEN, ['No nickname given']);

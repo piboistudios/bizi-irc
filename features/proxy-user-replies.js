@@ -11,8 +11,13 @@ module.exports = function proxyUserReplies(user, label, src) {
             case 'send':
               return function labeledResponse(message) {
                 if (src.executing === false) return user.send(...arguments);
-                logger.trace('sending labeled?', ...arguments);
+                src.needsAck = false;
+
                 if (message?.batch instanceof Array) {
+                  message.batch.forEach(m => {
+                    m.tags ??= {};
+                    m.tags.label = label;
+                  });
                   return user.send(message);
                 }
                 else if (!(message instanceof Message)) {
@@ -20,7 +25,6 @@ module.exports = function proxyUserReplies(user, label, src) {
                 }
                 message.tags ??= {};
                 message.tags["label"] = label;
-                src.needsAck = false;
                 return user.send(message);
               };
             default: {

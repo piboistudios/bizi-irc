@@ -43,4 +43,6 @@ module.exports = {
   QUIT: require('./quit'),
   REDACT: require('./redact'),
   SEARCH: require('./search'),
+  REGISTER: require('./register'),
+  VERIFY: require('./verify')
 };

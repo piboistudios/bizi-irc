@@ -84,11 +84,12 @@ module.exports = async function sendmsg(arg0) {
             const cannotSendChan = [
                 target.modes.has('m') && !target.hasOp(user) && !target.hasVoice(user),
                 target.modes.has('n') && !target.hasUser(user),
+                target.hasBanned(user),
                 ...(authz instanceof Array ? authz : [authz]).map(r => !r)
-            ].reduce((l, r) => l || r, false);
+            ].reduce((l, r, idx) => (l || r) && (l||idx), false);
             if (cannotSendChan) {
                 let halt = true;
-                logger.trace("forbidden");
+                logger.trace("forbidden rule#", cannotSendChan);
                 await forbidden({ user, server, dest }, () => { halt = false });
                 if (halt) return;
             }

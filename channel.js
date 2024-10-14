@@ -5,6 +5,7 @@ const Message = require('./message');
 const { Sequelize, Model } = require('sequelize');
 const { mkLogger } = require('./logger');
 const { db } = require('./state');
+const truncate = require('./features/truncate');
 const logger = mkLogger("modes");
 // see: https://libera.chat/guides/channelmodes
 
@@ -51,6 +52,10 @@ class Channel extends Sequelize.Model {
    */
   server;
   /**
+   * @type {import('./modes').Modes}
+   */
+  modes;
+  /**
    * Create a new channel.
    *
    * @param {string} name Channel name. (Starting with # or &, preferably.)
@@ -78,12 +83,27 @@ class Channel extends Sequelize.Model {
     }
     return mode;
   }
+
+  /**
+   * 
+   * @param {import('./user')} user 
+   */
+  hasBanned(user) {
+    return this.modes.hasNickOrMask('b', user);
+  }
+  /**
+   * 
+   * @param {import('./user')} user 
+   */
+  hasInvited(user) {
+    return this.modes.hasNickOrMask('I', user);
+  }
   /**
    * Joins a user into this channel.
    *
    * @param {import('./user')} user Joining user.
    */
-  async join(user) {
+  async join(user, tags) {
     if (this.hasUser(user)) {
       logger.fatal("user already in channel", this.onlineUsers);
       throw new Error(`User ${user.nickname} has already join this channel ${this.name}`);
@@ -91,6 +111,11 @@ class Channel extends Sequelize.Model {
       user.join(this);
       this.users.push(user);
     }
+    await user.send(user, 'JOIN', [
+      this.name,
+      user.username,
+      `:${user.realname}`
+    ], tags);
     if (this.modes.has('x', user.nickname)) {
       this.modes.unset('x', user.nickname);
     }
@@ -133,7 +158,7 @@ class Channel extends Sequelize.Model {
     }
   }
   get onlineUsers() {
-    return this.users.filter(u => u.socket);
+    return this.users.filter(u => u.socket && u?.principal?.uid);
   }
   /**
    * Checks if a user is in this channel.
@@ -292,7 +317,7 @@ class Channel extends Sequelize.Model {
   }
 
 
-  inspect() {
+  [require('util').inspect.custom]() {
     return this.toString();
   }
   toString() {
@@ -300,7 +325,7 @@ class Channel extends Sequelize.Model {
       channel name: ${this.name}
              topic: ${this.topic}
              users: ${this.users.length}
-              ${this.users.map(u => `- ${u.nickname}`).join('\n')}
+              ${truncate(this.users.map(u => `- ${u.nickname}`), 64)}
     `;
   };
   static async _mk({ name, server }) {

@@ -17,7 +17,7 @@ async function topic({ user, server, tags, parameters: [channelName, topic] }) {
       }
       return
     }
-    if (!channel.hasOp(user)) {
+    if (!channel.hasOp(user) && !user.isPrivileged) {
       user.send(server, ERR_CHANOPRIVSNEEDED, [user.nickname, channel.name, ':You\'re not channel operator'])
       return
     }

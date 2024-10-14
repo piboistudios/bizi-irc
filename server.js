@@ -1,4 +1,5 @@
 const net = require('net');
+const YAML = require('yaml');
 const fs = require('fs');
 const replies = require('./replies');
 const { debuglog } = require('util');
@@ -18,10 +19,12 @@ const async = require('async');
 const ChatLog = require('./models/chatlog');
 const fmtRes = require('./features/fmt-res');
 const { Modes } = require('./modes');
+const truncate = require('./features/truncate');
 const SERVER_SET_MODES = 'ZNAoO';
 
 /**
  * Represents a single IRC server.
+ * @template Account
  */
 class Server extends net.Server {
   /**
@@ -36,6 +39,7 @@ class Server extends net.Server {
 
   close() {
     clearInterval(this.dbSyncInterval);
+    clearInterval(this.inactivitySweepInterval);
     super.close(...arguments);
   }
 
@@ -47,7 +51,23 @@ class Server extends net.Server {
    *    external: Server["authExternal"],
    *    oauth2: Server["authenticateAndFetchUser"]
    * },
-   *  messageHandler: Server["execute"]
+   *  messageHandler: Server["execute"],
+   *  onLogin: Server["logUserIn"],
+   *  getAccount(authid:string):Promise<{email: string, uid: string}>,
+   *  email: (opts:{to:string, from?:string, subject?:string, message:string}) => Promise<void>,
+   *  register: {
+   *   validate: {
+   *      accountName(registration:import('./user')["registration"], done:(string)=>void):void,
+   *      passwordStrength(registration:import('./user')["registration"], done:(string)=>void):void,
+   *      password(registration:import('./user')["registration"], done:(string)=>void):void,
+   *      emailTarget(registration:import('./user')["registration"], done:(string)=>void):void,
+   *      emailFormat(registration:import('./user')["registration"], done:(string)=>void):void
+   *   },
+   *   verify: boolean,
+   *   genVerificationCode():Promise<string>,
+   *   enabled: boolean,
+   *   maxVerificationAttempts: number
+   * }
    * }} options `net.Server` options.
    */
   constructor(options = {}) {
@@ -59,6 +79,9 @@ class Server extends net.Server {
      */
     this.batches = {};
     logger.debug("options", options);
+    /**
+     * @todo undo this bad decision
+     */
     this.dbSyncInterval = setInterval(() => {
       // logger.info("DB Sync");
       // logger.debug("Checking docs for changes:", this.docs);
@@ -77,6 +100,17 @@ class Server extends net.Server {
           })
       });
     }, options.dbRefreshInterval || 1500 * 60);
+    this.inactivitySweepInterval = setInterval(() => {
+      this.users.filter(u => u.lastReceived < (Date.now() - 1000 * 60 * 5))
+        .forEach(inactiveUser => this.removeCnx(inactiveUser))
+    });
+    if (options.email) this.email = options.email;
+    else this.email = () => { throw new Error("No email callback specified"); }
+    if (options.getAccount) this.getAccount = options.getAccount;
+    else this.getAccount = () => { throw new Error("No getAccount callback specified"); }
+    if (options.onLogin) this.onLogin = options.onLogin;
+    else this.onLogin = () => { throw new Error("No onLogin callback specified"); }
+    this.register = options.register || { verify: false, enabled: true };
     this._authExternal = options.authHandlers.external;
     this._authOauth2 = options.authHandlers.oauth2;
     this.users = [];
@@ -135,6 +169,7 @@ class Server extends net.Server {
     ];
     this.realnameMaxLength = 256;
     this.capabilities = [
+      { name: 'draft/account-registration', value: ['email-required', 'custom-account-name'] },
       'draft/search',
       // 'draft/persistence',
       'multi-prefix',
@@ -145,7 +180,7 @@ class Server extends net.Server {
       'echo-message',
       'draft/event-playback',
       'draft/chathistory',
-      'draft/labeled-response',
+      'labeled-response',
       // 'tls',
       // 'cap-notify',
       'batch',
@@ -222,10 +257,10 @@ class Server extends net.Server {
     }
 
     debug('server started')
-
-
-
-
+  }
+  getCap(name) {
+    const existingCap = this.capabilities.find(c => c === name || c.name === name);
+    return existingCap && (existingCap.value || null);
   }
   /**
    * @param {import('./user')} user
@@ -265,6 +300,44 @@ class Server extends net.Server {
       return null;
     }
   }
+
+  /**
+   * 
+   * @param {import('./user')} user 
+   * @returns 
+   */
+  async sendVerification(user, {
+    cache,
+    message,
+    done
+  }) {
+    cache ??= "registration";
+    message ??= `A ${this.servername} user account registration has been initiated with this email/phone number.\nYour passcode is:${code}\nIf you did not request this code, please forward this message to abuse@${this.servername}.`
+    done ??= () => user.send(
+      this,
+      "REGISTER",
+      [
+        "VERIFICATION_REQUIRED",
+        user[cache].account,
+        "A one-time passcode has been sent to your phone/email for verification. If you don't see the message, check your spam/junk messages."
+      ]
+    );
+    const code = await this.register.genVerificationCode()
+    return this.email({
+      to: user[cache].email,
+      subject: "Account Verification Code",
+      message
+    })
+      .then(() => {
+        user[cache].verification ??= {};
+        user[cache].verification.code = code;
+        return done(code)
+      })
+      .catch(e => {
+        logger.fatal("Failed to send account verification code:", e);
+        throw e;
+      });
+  }
   async sendTo(target, msg) {
     const server = this;
     if (server.chanTypes.includes(target[0])) {
@@ -301,8 +374,8 @@ class Server extends net.Server {
         && params.length === 1
         && params[0] === user.nickname
       ) {
-        logger.debug("User can set/unset x flag to join/unjoin call")
-        return true;
+        logger.debug("User can set/unset x flag to join/unjoin call (if logged in ;D)", user.principal)
+        return Boolean(user.principal);
       }
       logger.debug('continuing validation...', {
         conference: dest.target.hasConference,
@@ -310,7 +383,7 @@ class Server extends net.Server {
         params
       })
       const channel = dest.target;
-      if (!channel.hasOp(user)) {
+      if (!channel.hasOp(user) && !user.isPrivileged) {
         logger.trace('so user should get a message...');
         user.send(server, replies.ERR_CHANOPRIVSNEEDED,
           [user.nickname, channel.name, ':You\'re not channel operator'])
@@ -347,6 +420,112 @@ class Server extends net.Server {
     }
     logger.trace("its a valid mode..");
     return true;
+  }
+  /**
+   * 
+   * @param {import('./user')} user 
+   * @param {import('./models/user')} principal 
+   * @param {Account} account
+   * @param {boolean} isNew
+   */
+  async logUserIn(user, principal, account, isNew) {
+    if (!user.principal) {
+      user.channels = [];
+    }
+    if (this.onLogin instanceof Function) {
+      const result = await this.onLogin(user, principal, account, isNew);
+      logger.trace("Result:", result);
+      const [err, info] = (result || [])
+      if (err) {
+        logger.trace("Failed to log user in:", err);
+        throw err;
+      }
+      if (info) {
+
+        if (!principal.uid && info.uid) {
+          principal.uid = info.uid;
+          await principal.save();
+        }
+      }
+    }
+
+    user.principal = principal;
+    user.nickname = user.principal.nickname || user.principal.username || user.nickname || user.nickname;
+    user.username = (!isNew && user.principal.username) || account?.meta?.profile?.username || user.username;
+    user.realname = (!isNew && user.principal.realname) || account?.meta?.profile?.displayName || user.realname;
+    let modes = isNew ? (user.modes || await Modes.mk()) : await Modes.findByPk(principal._modes);
+    if (!modes) {
+      logger.trace("user doesn't have modes?", principal._modes);
+      modes = await Modes.mk();
+    }
+    modes.isUser = true;
+    if (isNew) {
+      modes.add("R");
+    }
+    if (user.secure) {
+      modes.add('Z');
+    } else {
+      modes.unset('Z');
+    }
+    await modes.save();
+    logger.trace("user modes:", modes);
+
+    principal._modes = modes.id;
+    user.modes = modes;
+    logger.trace("user.modes:", user.modes);
+    principal.meta ??= {};
+    principal.meta.logins ??= [];
+    this.docs.push(user.principal);
+    principal.meta.logins.push({
+      audit: {
+        at: new Date(),
+        by: {
+          ip: user.address,
+          hostname: user.hostname
+        }
+      }
+    });
+    principal.changed('meta', true);
+    await principal.save();
+    // user.send(user, "NICK", [user.nickname]);
+    // user.send(user, "ACCOUNT", [user.username]);
+    const dupes = this.users.filter(u => u.nickname && normalize(u.nickname) === user.nickname && u !== user);
+    await Promise.all(dupes.map(async dupe => {
+
+      dupe = await this.findUser(user.nickname, true);
+      logger.trace("Dupe?", dupe);
+      if (!user.is(dupe)) {
+        dupe.onReceive(new Message(dupe, 'QUIT', [':switched connections.']));
+      }
+    }));
+
+    return user.send(this, replies.RPL_LOGGEDIN, [
+      user.nickname,
+      user,
+      user.nickname,
+      `:You are now logged in as ${user.username}`
+    ]);
+  }
+  /**
+   * 
+   * @param {import('./user')} user 
+   * @returns 
+   */
+  async completeRegistration(user, command = 'REGISTER') {
+    logger.trace("Registration complete:", { ...user.registration, password: undefined });
+    user.registration.complete = true;
+    const principal = new User.Model({
+      username: user.registration.account,
+      nickname: user.nickname || account,
+      password: user.registration.password && await User.Model.hash(user.registration.password),
+      realname: user.realname,
+      _modes: user.modes.id
+    });
+    logger.trace(user, "being logged in as ", principal.username);
+    return this.logUserIn(user, principal)
+      .then(() => {
+        return user.send(this, command, ["SUCCESS", user.registration.account, "Account registration successful."]);
+      });
   }
   async finishBatch(id) {
     logger.info("Finishing batch", id);
@@ -410,8 +589,10 @@ class Server extends net.Server {
     // const oldMask = user.mask();
     user.hostname = hostname;
     const msg = new Message(this, 'CHGHOST', [user.username, user.hostname], ['chghost']);
-    user.send(msg);
-    user.channels.forEach(c => c.broadcast(msg));
+    return Promise.all([
+      user.send(msg),
+      Promise.all(user.channels.map(c => c.broadcast(msg)))
+    ]);
   }
   /**
    * @type {Server["sendSignUpNote"]}
@@ -451,25 +632,25 @@ class Server extends net.Server {
    * 
    * @param {import('./user')} user 
    */
-  welcome(user) {
-    user.send(this, '001', [user.nickname, ':Welcome']);
-    user.send(this, '002', [user.nickname, `:Your host is ${this.servername} running version ${pkg.version}`]);
-    user.send(this, '003', [user.nickname, `:This server was created ${this.created}`]);
-    user.send(this, '004', [user.nickname, this.servername, pkg.name, pkg.version]);
+  async welcome(user) {
+    await user.send(this, '001', [user.nickname, ':Welcome']);
+    await user.send(this, '002', [user.nickname, `:Your host is ${this.servername} running version ${pkg.version}`]);
+    await user.send(this, '003', [user.nickname, `:This server was created ${this.created}`]);
+    await user.send(this, '004', [user.nickname, this.servername, pkg.name, pkg.version]);
 
-    user.send(this, '005', [user.nickname, ...this.isupport, ':are supported by this server']);
-    user.send(this, 'MODE', [user.nickname, '+w']);
+    await user.send(this, '005', [user.nickname, ...this.isupport, ':are supported by this server']);
+    await user.send(this, 'MODE', [user.nickname, '+w']);
     if (user.principal) // cloak authenticated user ips
-      this.chghost(user, this.servername);
+      await this.chghost(user, this.servername);
     if (this.motd) {
       const send = (line) => {
 
-        user.send(this, "372", [user.nickname, ':' + line]);
+        return user.send(this, "372", [user.nickname, ':' + line]);
       }
       if (typeof this.motd === 'string') {
-        send(this.motd);
+        return send(this.motd);
       } else if (this.motd instanceof Array) {
-        this.motd.forEach(line => send(line));
+        return Promise.all(this.motd.map(line => send(line)));
       }
     }
   }
@@ -487,18 +668,24 @@ class Server extends net.Server {
    * Finds a user by their nickname.
    *
    * @param {string} nickname Nickname to look for.
-   *
+   * @param {object} opts - or a boolean for online only users
+   * @param {boolean} opts.includeUsername - also return users with specified nickname as username
+   * @param {boolean} opts.online - or a boolean for online only users
    * @return {User|undefined} Relevant User object if found, `undefined` if not found.
    */
-  async findUser(nickname, online) {
+  async findUser(nickname, opts) {
+    let online = opts?.online || typeof opts === 'boolean' ? opts : false;
     if (!nickname) return;
     nickname = normalize(nickname)
     const memUser = this.users.find(user => user.nickname && normalize(user.nickname) === nickname);
     if (memUser) return memUser;
     else if (online) return null;
-    const principal = await require('./models/user').findOne({ where: { nickname: nickname } });
+    const criteria = { nickname: nickname };
+    if (opts?.includeUsername) criteria.username = nickname;
+    const principal = await require('./models/user').findOne({ where: criteria });
     if (!principal) return null;
     const user = new User(null, this);
+    await user.setup();
     user.nickname = nickname;
     user.principal = principal;
     return user;
@@ -635,6 +822,7 @@ class Server extends net.Server {
     message.server = this
     const locals = {};
     let nextCalled = false;
+    message.user.lastReceived = Date.now();
     return async.detectSeries(this.middleware, (mw, next) => {
       logger.trace(mw);
       if (mw.command === '' || mw.command === message.command.toLowerCase()) {
@@ -658,7 +846,7 @@ class Server extends net.Server {
       } else next(null, false);
     })
       .catch(e => {
-        message.user && e && message.user.send(this, "FAIL", [message.command, 'ERROR', '"' + e]);
+        message.user && e && message.user.send(this, "FAIL", [message.command, 'ERROR', '' + e]);
       })
       .then(() => {
         const label = message?.tags?.label;
@@ -696,6 +884,33 @@ class Server extends net.Server {
   mask() {
     return this.servername;
   }
+  [require('util').inspect.custom]() {
+    return this.toString();
+  }
+  toString() {
+    return YAML.stringify([
+      `ISUPPORT: ${this.isupport.join('\n')}`,
+      `capabilities:\n` + YAML.stringify(this.capabilities.map(
+        c => typeof c === 'string' ?
+          c :
+          YAML.stringify(c)
+      )),
+      `address: ${YAML.stringify(this.address())}`,
+      `MOTD: ${this.motd}`,
+      `Created: ${this.created}`,
+      `channels: \n` + truncate([...this.channels.entries()]
+        .map(e => `name: ${e[0]}\n` +
+          `users: ${e[1].users.length}`
+        ), 64),
+      `servername: ${this.servername}
+             users: ${this.users.length} `,
+      truncate(this.users.map(
+        u => `- ${u.nickname} (` +
+          [u.realname, u.username]
+            .filter(Boolean))
+        .join('/') + ')', 16)
+    ]);
+  };
 }
 
 function normalize(str) {
@@ -705,5 +920,6 @@ function normalize(str) {
     .replace(/}/g, ']')
     .replace(/\|/g, '\\')
 }
+
 
 module.exports = Server;

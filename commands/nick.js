@@ -9,7 +9,13 @@ const {
   ERR_NICKNAMEINUSE
 } = require('../replies')
 const debug = logger.debug;
-
+/**
+ * 
+ * @param {{
+ *  server: import('../server')
+ * }} param0 
+ * @returns 
+ */
 module.exports = async function nick({ user, server, tags, parameters: [nickname] }) {
   nickname = nickname.trim().replace(/-at-/g, '|at|');
   const { default: escape } = await escapeLib;

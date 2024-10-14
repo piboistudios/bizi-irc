@@ -21,8 +21,8 @@ async function whois({ user, server, parameters: [nickmask] }) {
   if (!target.principal && !user.isPrivileged) target = null;
   if (target) {
     
-    user.send(server, RPL_WHOISUSER, [user.nickname, target.username, target.hostname, '*', `:${user.realname}`])
-    user.send(server, RPL_WHOISSERVER, [user.nickname, target.username, target.servername, target.servername])
+    user.send(server, RPL_WHOISUSER, [user.nickname, target.nickname, target.username, target.hostname, '*', `:${target.realname}`])
+    user.send(server, RPL_WHOISSERVER, [user.nickname, target.nickname, target.servername, target.servername])
     logger.trace("Target:", target);
     if (target.modes.has('b')) user.send(server, RPL_WHOISBOT, [user.nickname, target.nickname, ":Is a bot"]);
     user.send(server, RPL_ENDOFWHOIS, [user.nickname, target.username, ':End of /WHOIS list.'])

@@ -35,6 +35,7 @@
     "haraka-config": "^1.4.0",
     "irc-framework": "^4.13.1",
     "javascript-time-ago": "^2.5.10",
+    "js-md5": "^0.8.3",
     "minimatch": "^5.1.0",
     "object-merge": "^2.5.1",
     "passport-openid-connect": "^0.1.0",
@@ -44,7 +45,8 @@
     "split2": "^2.1.1",
     "sqlite3": "^5.1.7",
     "stream-combiner": "^0.2.2",
-    "ws": "^8.11.0"
+    "ws": "^8.11.0",
+    "yaml": "^2.5.1"
   },
   "repository": {
     "type": "git",

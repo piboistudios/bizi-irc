@@ -12,6 +12,7 @@ const proxyUserReplies = require('./features/proxy-user-replies');
 const logger = mkLogger('user');
 const debug = logger.debug;
 const crypto = require('crypto');
+const truncate = require('./features/truncate');
 // see: https://libera.chat/guides/usermodes
 
 
@@ -77,8 +78,7 @@ class User extends Duplex {
     });
     /**@type {import('./server')} */
     this.server = server;
-    /**@type {import('jose').JWTPayload} */
-    this.auth = undefined;
+    
     /**
      * @type {import('http').IncomingMessage}
      */
@@ -88,24 +88,34 @@ class User extends Duplex {
     this.socket = sock;
     /**@type {string} */
     this.away = null;
-    /**@type {import('./channel')[]} */
+    /**@type {import('./channel').Channel[]} */
     this.channels = [];
     this.auth = {
       mechanism: '',
-      client: {
-        first: '',
-        final: ''
-      },
-      serverFirstResponse: {
-        first: '',
-        final: ''
-      },
+      buffer: '',
+      ctx: null,
+      firstMsg: null
+      
     }
     this.initialized = false;
     this.cap = {
       list: [],
-      version: 0
-    }
+      version: 0,
+      registered: false
+    };
+    /**
+     * @type {{
+     *  account: string,
+     *  email: string,
+     *  password: string,
+     *  verification: {
+     *    code:string,
+     *    attempts: number,
+     *  },
+     * complete: boolean
+     * }}
+     */
+    this.registration = {};
     this.sid = crypto.randomUUID();
     /**@type {import('./models/user').Schema & import('mongoose').Document<any, any, import('./models/user').Schema>} */
     this.principal = null;
@@ -126,7 +136,7 @@ class User extends Duplex {
     if (!sock) return;
     logger.trace("Handler setup..");
     /**
-     * @type {import('http').incomi}
+     * @type {import('http').IncomingMessage}
      */
     this.req = sock._req;
     sock.on('data', line => {
@@ -242,7 +252,7 @@ class User extends Duplex {
       }
     }
     // logger.trace("SEND ARGS", message);
-    logger.trace('sending', { args: [...arguments] })
+    // logger.trace('sending', { args: [...arguments] })
     if (!(message instanceof Message)) {
       message = new Message(...arguments)
     } else if (message.requirements.length && !message.requirements.every(v => this.cap.list.includes(v))) {
@@ -303,7 +313,7 @@ class User extends Duplex {
     return minimatch(this.mask() || '', mask);
   }
   is(user) {
-    return this.ref === user.ref;
+    return this.sid === user.sid;
   }
   get isLocalOp() {
     return this.modes.has('O')
@@ -379,7 +389,7 @@ class User extends Duplex {
    * end socket
    */
   end() {
-    this.socket.end();
+    this.socket && this.socket.end();
     return this;
   }
 
@@ -387,9 +397,9 @@ class User extends Duplex {
     return this.mask();
   }
   [require('util').inspect.custom]() {
-    const { channels, cap, nickname, hostname, sid, } = this;
+    const { channels, cap, nickname, hostname, sid, realname } = this;
     const mask = this.mask();
-    const r = { channels, cap, nickname, hostname, sid, mask };
+    const r = { channels: truncate(channels, 64), nickname, hostname, sid, mask, realname, };
     return require('util').inspect(r);
   }
   inspect() {
@@ -397,5 +407,5 @@ class User extends Duplex {
     return r.toString();
   }
 }
-
+User.Model = require('./models/user');
 module.exports = User;

@@ -8,7 +8,6 @@ const debug = debuglog('ircs:Command:PING');
 function PING({ server, user, parameters }) {
   debug('received ping', parameters);
   user.send(server, 'PONG', parameters);
-  user
 }
 
 module.exports = PING;

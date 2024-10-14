@@ -27,34 +27,27 @@ async function join(opts) {
   for (const channelName of channelNames.split(',')) {
     const channel = (await server.getChannel(channelName));
     if (channel) {
-      
-      if (!channel.modes.has('q', user.nickname)) {
-        /**@type {Array} */
-        const banlist = channel.modes.retrieve('b') || [];
-        if (banlist.find(mask => {
-          logger.debug("Checking if", user.mask(), "matches", mask);
-          return user.matchesMask(mask);
-        })) {
 
+      if (!channel.modes.has('q', user.nickname)) {
+        if (channel.hasBanned(user)) {
           user.send(server, ERR_BANNEDFROMCHAN, [channelName, ':Cannot join channel!']);
           continue;
         }
       }
-      if (!channel.hasOp(user) && channel.isInviteOnly && !channel.modes.has('I', user.nickname)) {
+      if (!channel.hasOp(user) && channel.isInviteOnly && !channel.modes.hasNickOrMask('I', user)) {
         user.send(server, ERR_INVITEONLYCHAN, [channelName, ':Cannot join invite-only channel without an invite: ' + channelName]);
         continue;
       }
     }
     try {
-
-      await channel.join(user)
+      await channel.join(user, tags)
     } catch (e) {
       logger.error("Unable to join channel:", e);
       return;
     }
     // only send to user if they're anonymous
-    await (user.principal ? channel : user)
-      .send(
+    user.principal && await channel
+      .broadcast(
         user,
         'JOIN',
         [

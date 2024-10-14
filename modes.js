@@ -62,7 +62,7 @@ class Modes extends Sequelize.Model {
   unset(mode, params = []) {
     logger.trace("modes unset", mode, params);
     if (!(params instanceof Array)) params = [params];
-    
+
     if (this.isFlagMode(mode)) {
       delete this.flagModes[mode]
       this.changed('flagModes', true);
@@ -104,7 +104,33 @@ class Modes extends Sequelize.Model {
     }
     return false
   }
-
+  /**
+ * 
+ * @param {string} mode 
+ * @param {import('./user')} user 
+ * @returns {boolean}
+ */
+  hasMask(mode, user) {
+    const val = this.retrieve(mode);
+    return val && val
+      .find(mask =>
+        (
+          mask.indexOf('*!') === 0 ||
+          mask.indexOf(user.nickname + '!') === 0
+        ) &&
+        (
+          user.matchesMask(mask)
+        )
+      )
+  }
+  /**
+   * 
+   * @param {string} mode 
+   * @param {import('./user')} user 
+   */
+  hasNickOrMask(mode, user) {
+    return this.has(mode, user.nickname) || this.hasMask(mode, user);
+  }
   flags() {
     return Object.keys(this.flagModes || {})
   }

@@ -45,6 +45,9 @@ const User = h(
     async verifypw(pw) {
       await Boolean(this.password) && pbkdf2.verify(this.password, pw)
     }
+    static async hash(pw) {
+      return pbkdf2.hash(pw);
+    }
   },
   ATTRIBUTES,
   {

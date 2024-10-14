@@ -25,10 +25,12 @@ const authedCommands = [
 /**
  * 
  * @param {{
+ *  accountType: T,
  *  sequelize: import('sequelize').Sequelize,
  *   server: import('http').Server
  * } & ConstructorParameters<typeof import('./server')>["0"]} opts
- * @return {import('./server')}
+ * @return {import('./server')<T>}
+ * @template T
  */
 async function main(opts) {
     const {
@@ -139,6 +141,7 @@ async function main(opts) {
     })
     wsServer.on('clientError', logger.error);
     wsServer.on('upgrade', function (request, socket, head) {
+        
         // socket.on('error', logger.error);
 
         // console.log('Parsing session from request...');
